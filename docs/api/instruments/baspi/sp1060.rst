@@ -1,0 +1,60 @@
+..
+    This file is part of the PyMeasure package.
+
+    Copyright (c) 2013-2026 PyMeasure Developers
+
+.. _basellnhrdacii:
+
+#####################
+Basel LNHR DAC II
+#####################
+
+.. show-inheritance:
+
+.. autoclass:: pymeasure.instruments.basel.BaselLNHRDACII
+    :members:
+    :show-inheritance:
+
+    .. contents:: Table of Contents
+        :local:
+        :backlinks: none
+
+    .. sectionauthor:: Your Name <your.email@example.com>
+
+    Description
+    -----------
+
+    The Basel Precision Instruments LNHR DAC II is a high-precision, low-noise 
+    24-bit digital-to-analog converter. This driver supports voltage control, 
+    status monitoring, and individual channel enabling/disabling for all 12 channels.
+
+    Example Usage
+    -------------
+
+    .. code-block:: python
+
+        from pymeasure.instruments.basel import BaselLNHRDACII
+        from pymeasure.adapters import VISAAdapter
+
+        adapter = VISAAdapter("ASRL3::INSTR", baud_rate=9600)
+        dac = BaselLNHRDACII(adapter)
+
+        # Configure Channel 1
+        dac.ch_1.voltage_setpoint = 2.5
+        dac.ch_1.enabled = True
+
+        print(f"Current voltage on Ch 1: {dac.ch_1.voltage} V")
+        # Iterate only through channels that are currently ON
+        for ch in dac.enabled_channels:
+            print(f"Channel {ch.id} is active at {ch.voltage} V")
+
+        # Quickly turn off all active outputs
+        dac.disable_all()
+        dac.shutdown()
+
+    Properties
+    ----------
+
+    .. autoclass:: pymeasure.instruments.basel.sp1060.DACChannel
+        :members:
+        :noindex:..
