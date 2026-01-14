@@ -31,41 +31,55 @@ class DACChannel(Channel):
 
     _STEPS = 16777215  # 2^24 - 1
     enabled = Channel.control(
-        "{self.id} S?",
-        "{self.id} %s",
+        "{ch} S?",
+        "{ch} %s",
         """Control the output state of the channel (True/False).""",
         validator=validators.strict_discrete_set,
         values={True: "ON", False: "OFF"},
         map_values=True,
-        check_set_errors=True,
+        check_set_errors=False,
     )
     voltage_setpoint = Channel.control(
         None,
-        "{self.id} %s",
+        "{ch} %s",
         """Control the (DC) voltage setpoint (-10V to 10V).""",
         validator=validators.truncated_range,
         values=[-10, 10],
         set_process=lambda v: f"{int((v + 10) / 20 * DACChannel._STEPS):06X}",
-        check_set_errors=True,
+        check_set_errors=False,
     )
 
     voltage = Channel.measurement(
-        "{self.id} V?",
+        "{ch} V?",
         """Measure the actual voltage in volts (float).""",
-        get_process=lambda h: (int(h, 16) / DACChannel._STEPS * 20) - 10,
+        get_process=lambda h: DACChannel._from_24bit_hex(h),
     )
+    @staticmethod
+    def _from_24bit_hex(hex_str):
+        print(type(hex_str), hex_str)
+        val = int(hex_str, 16)
+        if val >= 0x800000:
+            val -= 0x1000000
+        # Dividing by 2^23 - 1 (8388607)
+        return (val / 8388607) * 10
+    def check_set_errors(self):
+        """Mandatory handshake: DAC returns '0' on success for set commands."""
+        response = self.read()
+        if response != "0":
+            raise RuntimeError(f"Channel {self.ch} Error: {response}")
 
     def check_errors(self):
         """Mandatory handshake: DAC returns '0' on success for set commands."""
         response = self.read()
         if response != "0":
-            raise RuntimeError(f"Channel {self.id} Error: {response}")
+            raise RuntimeError(f"Channel {self.ch} Error: {response}")
 
 
 class BaspiLNHRDACII(Instrument):
     """Basel Precision Instruments Low-Noise High-Resolution DAC II with 12
     independent voltage channels.
     """
+    channels = Instrument.MultiChannelCreator(DACChannel, tuple(range(1, 13)))
 
     def __init__(self, adapter, name="Basel LNHR DAC II", **kwargs):
         super().__init__(
@@ -76,7 +90,10 @@ class BaspiLNHRDACII(Instrument):
             read_termination="\n",
             **kwargs,
         )
-        channels = Instrument.MultiChannelCreator(DACChannel, tuple(range(1, 13)))
+    @property
+    def id(self):
+        """Identify the instrument. Replaces the default SCPI *IDN? behavior."""
+        return self.ask("IDN?")
 
     @property
     def enabled_channels(self):
