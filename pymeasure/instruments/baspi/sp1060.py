@@ -45,14 +45,14 @@ class DACChannel(Channel):
         """Control the (DC) voltage setpoint (-10V to 10V).""",
         validator=validators.truncated_range,
         values=[-10, 10],
-        set_process=lambda v: f"{int((v + 10) / 20 * DACChannel._STEPS):06X}",
-        check_set_errors=False,
+        set_process=lambda v: f"{int((v + 10) * 838860.74):06X}",
+        check_set_errors=True,
     )
 
     voltage = Channel.measurement(
         "{ch} V?",
         """Measure the actual voltage in volts (float).""",
-        get_process=lambda h: DACChannel._from_24bit_hex(h),
+        cast=lambda v: float(int(v, 16) / (838860.74) - 10)
     )
     @staticmethod
     def _from_24bit_hex(hex_str):
@@ -65,14 +65,16 @@ class DACChannel(Channel):
     def check_set_errors(self):
         """Mandatory handshake: DAC returns '0' on success for set commands."""
         response = self.read()
-        if response != "0":
-            raise RuntimeError(f"Channel {self.ch} Error: {response}")
+        if response != "0\r\n":
+            raise RuntimeError(f"Channel Error: {response}")
+        return []
 
     def check_errors(self):
         """Mandatory handshake: DAC returns '0' on success for set commands."""
         response = self.read()
-        if response != "0":
-            raise RuntimeError(f"Channel {self.ch} Error: {response}")
+        if response != "0\r\n":
+            raise RuntimeError(f"Channel Error: {response}")
+        return []
 
 
 class BaspiLNHRDACII(Instrument):
@@ -111,8 +113,8 @@ class BaspiLNHRDACII(Instrument):
     def disable_all(self):
         """Turn OFF all channels that are currently enabled."""
         for ch in self.enabled_channels:
-            ch.voltage_setpoint = 0
-            ch.enabled = False
+            self.channels[ch].voltage_setpoint = 0
+            self.channels[ch].enabled = False
 
     def shutdown(self):
         """
