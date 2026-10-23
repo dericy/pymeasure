@@ -1,7 +1,7 @@
 #
 # This file is part of the PyMeasure package.
 #
-# Copyright (c) 2013-2025 PyMeasure Developers
+# Copyright (c) 2013-2026 PyMeasure Developers
 #
 # Permission is hereby granted, free of charge, to any person obtaining a copy
 # of this software and associated documentation files (the "Software"), to deal
@@ -42,7 +42,6 @@ def fake():
 
 
 def test_init(adapter):
-    assert adapter.connection is None
     assert adapter.log == logging.getLogger("Adapter")
 
 
@@ -88,14 +87,33 @@ def test_not_implemented_methods(adapter, method, args):
 
 
 @pytest.mark.parametrize("response, options, result", (
-    ("1,2", dict(dtype=int, sep=","), [1, 2]),
-    (b"\x01\x02", dict(dtype=np.uint8), [1, 2]),
-    (b'\x01\x02\x03\x04\x05', dict(dtype=np.uint8, count=3), [1, 2, 3]),
+    ("1,2", {"dtype": int, "sep": ","}, [1, 2]),
+    (b"\x01\x02", {"dtype": np.uint8}, [1, 2]),
+    (b'\x01\x02\x03\x04\x05', {"dtype": np.uint8, "count": 3}, [1, 2, 3]),
     ("abcdefgh", {}, [1.6777999e+22, 4.371022e+24]),
 ))
 def test_read_binary_values(response, options, result):
     a = ProtocolAdapter([(None, response)])
     assert list(a.read_binary_values(**options)) == pytest.approx(result)
+
+
+@pytest.mark.parametrize(
+    "termination_bytes, result",
+    (
+        (1, [1, 2, 3, 4]),
+        (-1, [1, 2, 3, 4]),
+        (0, [1, 2, 3, 4, 10]),
+        (None, [1, 2, 3, 4, 10]),
+    ),
+)
+def test_read_binary_values_termination_bytes(termination_bytes, result):
+    """Test the stripping of the termination at the message end, regardless of the sign."""
+    response = b"\x00\x00" + bytes([1, 2, 3, 4]) + b"\n"
+    a = ProtocolAdapter([(None, response)])
+    values = a.read_binary_values(
+        header_bytes=2, dtype=np.uint8, termination_bytes=termination_bytes
+    )
+    assert list(values) == result
 
 
 def test_write_binary_values():

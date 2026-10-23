@@ -1,3 +1,27 @@
+#
+# This file is part of the PyMeasure package.
+#
+# Copyright (c) 2013-2026 PyMeasure Developers
+#
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+#
+# The above copyright notice and this permission notice shall be included in
+# all copies or substantial portions of the Software.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+# THE SOFTWARE.
+#
+
 import pytest
 
 from pymeasure.instruments.yokogawa.aq6370series import AQ6370D
@@ -152,6 +176,11 @@ def test_wavelength_start_setter():
         [(b":SENSe:WAVelength:STARt 8e-07", None)],
     ) as inst:
         inst.wavelength_start = 8e-07
+
+
+def test_wavelength_start_upper_bound():
+    with expected_protocol(AQ6370D, []) as inst, pytest.raises(ValueError):
+        inst.wavelength_start = 1800e-9
 
 
 def test_wavelength_stop_setter():
@@ -594,3 +623,39 @@ def test_trace_get_y_data_of_area():
             1.55001e-6,
             1.55002e-6,
         ]
+
+
+def test_authenticate_ethernet_lowercase_response():
+    # Older firmware (e.g. the AQ6370B) answers in lower case, which must
+    # still be accepted (case-insensitive comparison).
+    with expected_protocol(
+        AQ6370D,
+        [
+            ('OPEN "user"', "authenticate cram-md5."),
+            ("password", "ready"),
+        ],
+    ) as inst:
+        inst.authenticate_ethernet("user", "password")
+
+
+def test_authenticate_ethernet_open_failure_raises():
+    # An unexpected response to OPEN aborts before the password is sent, and
+    # the raised error reports the received response.
+    with expected_protocol(
+        AQ6370D,
+        [('OPEN "user"', "denied")],
+    ) as inst, pytest.raises(ConnectionError, match="denied"):
+        inst.authenticate_ethernet("user", "password")
+
+
+def test_authenticate_ethernet_password_failure_raises():
+    # A wrong password is rejected after OPEN succeeded, and the raised error
+    # reports the received response.
+    with expected_protocol(
+        AQ6370D,
+        [
+            ('OPEN "user"', "AUTHENTICATE CRAM-MD5."),
+            ("wrong", "error"),
+        ],
+    ) as inst, pytest.raises(ConnectionError, match="error"):
+        inst.authenticate_ethernet("user", "wrong")
