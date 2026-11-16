@@ -87,7 +87,6 @@ class BaspiLNHRDACII(Instrument):
         super().__init__(
             adapter,
             name,
-            includeSCPI=False,
             write_termination="\n",
             read_termination="\n",
             **kwargs,
