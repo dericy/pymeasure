@@ -1,7 +1,7 @@
 #
 # This file is part of the PyMeasure package.
 #
-# Copyright (c) 2013-2025 PyMeasure Developers
+# Copyright (c) 2013-2026 PyMeasure Developers
 #
 # Permission is hereby granted, free of charge, to any person obtaining a copy
 # of this software and associated documentation files (the "Software"), to deal
@@ -23,29 +23,44 @@
 #
 
 import logging
+from collections.abc import Sequence
+from typing import cast
 
 import pyqtgraph as pg
+from qtpy.QtWidgets import QGraphicsObject
+
+from ...experiment.results import Results
 from ..curves import ResultsImage
-from ..Qt import QtCore, QtWidgets
-from .tab_widget import TabWidget
+from ..Qt import QtCore, QtGui, QtWidgets
 from .image_frame import ImageFrame
+from .tab_widget import DEFAULT_COLOR, TabWidget
 
 log = logging.getLogger(__name__)
 log.addHandler(logging.NullHandler())
 
 
-class ImageWidget(TabWidget, QtWidgets.QWidget):
+class ImageWidget(TabWidget[ResultsImage], QtWidgets.QWidget):
     """ Extends the :class:`ImageFrame<pymeasure.display.widgets.image_frame.ImageFrame>`
     to allow different columns of the data to be dynamically chosen
     """
 
-    def __init__(self, name, columns, x_axis, y_axis, z_axis=None, refresh_time=0.2,
-                 check_status=True, selectors: list = [], parent=None):
-        super().__init__(name, parent)
+    def __init__(
+        self,
+        name: str,
+        columns: Sequence[str],
+        x_axis: str,
+        y_axis: str,
+        z_axis: str | None = None,
+        refresh_time: float = 0.2,
+        check_status: bool = True,
+        selectors: Sequence[str] | None = None,
+        parent: QtWidgets.QWidget | None = None,
+    ):
+        super().__init__(name=name, parent=parent)
+        self.selectors = list(selectors) if selectors else []
         self.columns = columns
         self.refresh_time = refresh_time
         self.check_status = check_status
-        self.selectors = selectors
         self.x_axis = x_axis
         self.y_axis = y_axis
         self._setup_ui()
@@ -54,7 +69,7 @@ class ImageWidget(TabWidget, QtWidgets.QWidget):
             self.columns_z.setCurrentIndex(self.columns_z.findText(z_axis))
             self.image_frame.change_z_axis(z_axis)
 
-    def _setup_ui(self):
+    def _setup_ui(self) -> None:
         self.columns_z_label = QtWidgets.QLabel(self)
         self.columns_z_label.setMaximumSize(QtCore.QSize(45, 16777215))
         self.columns_z_label.setText('Z Axis:')
@@ -75,7 +90,7 @@ class ImageWidget(TabWidget, QtWidgets.QWidget):
         self.plot = self.image_frame.plot
         self.columns_z.setCurrentIndex(2)
 
-    def _layout(self):
+    def _layout(self) -> None:
         vbox = QtWidgets.QVBoxLayout(self)
         vbox.setSpacing(0)
 
@@ -89,39 +104,86 @@ class ImageWidget(TabWidget, QtWidgets.QWidget):
         vbox.addWidget(self.image_frame)
         self.setLayout(vbox)
 
-    def sizeHint(self):
+    def sizeHint(self) -> QtCore.QSize:
         return QtCore.QSize(300, 600)
 
-    def new_curve(self, results, color=pg.intColor(0), **kwargs):
+    def new_curve(self, results: Results, color=DEFAULT_COLOR, **kwargs) -> ResultsImage:
         """ Creates a new image """
         image = ResultsImage(results,
                              wdg=self,
                              x=self.image_frame.x_axis,
                              y=self.image_frame.y_axis,
-                             z=self.image_frame.z_axis,
+                             z=cast(str, self.image_frame.z_axis),
                              **kwargs
                              )
         return image
 
-    def update_z_column(self, index):
+    def update_z_column(self, index: int) -> None:
         axis = self.columns_z.itemText(index)
         self.image_frame.change_z_axis(axis)
 
-    def load(self, curve):
+    def load(self, curve: ResultsImage) -> None:
+        plot = self.plot
+        if plot is None:
+            return
         curve.z = self.columns_z.currentText()
         curve.update_data()
-        self.plot.addItem(curve)
+        plot.addItem(curve)
 
-    def remove(self, curve):
-        self.plot.removeItem(curve)
+    def remove(self, curve: QGraphicsObject) -> None:
+        plot = self.plot
+        if plot is None:
+            return
+        plot.removeItem(curve)
+
+    def closeEvent(self, event: QtGui.QCloseEvent) -> None:
+        self._teardown_frame()
+        super().closeEvent(event)
+
+    def event(self, event: QtCore.QEvent) -> bool:
+        if event.type() == QtCore.QEvent.Type.DeferredDelete:
+            # Only the widget a deferred delete applies to receives it; the contained
+            # frame is torn down explicitly here.
+            self._teardown_frame()
+        elif event.type() == QtCore.QEvent.Type.ParentChange:
+            # Reparenting changes the ancestor window whose close has to reach the frame.
+            # Reinstalling the filter keeps never-shown frames covered as well.
+            self._reinstall_window_filter()
+        return super().event(event)
+
+    def _teardown_frame(self) -> None:
+        """Tear down the contained image frame, if it still exists."""
+        try:
+            frame = getattr(self, "image_frame", None)
+        except RuntimeError:  # the C/C++ object is gone already
+            frame = None
+        if frame is not None:
+            try:
+                frame._teardown()
+            except (RuntimeError, TypeError, AttributeError):
+                pass
+        # ``plot`` aliases the plot item of the frame, which is gone after teardown.
+        self.plot = None
+
+    def _reinstall_window_filter(self) -> None:
+        """Reinstall the frame's event filter on the window it now belongs to."""
+        try:
+            frame = getattr(self, "image_frame", None)
+        except RuntimeError:  # the C/C++ object is gone already
+            frame = None
+        if frame is not None:
+            try:
+                frame._install_window_filter()
+            except (RuntimeError, TypeError, AttributeError):
+                pass
 
     def selection_tags(self) -> list[str]:
         return ["1D", "2D"]
-        
-    def enter_selection_mode(self, initial_range):
-        super().enter_selection_mode()
+
+    def enter_selection_mode(self, initial_range: tuple) -> None:
+        super().enter_selection_mode(initial_range)
         start_x, stop_x, start_y, stop_y = initial_range
-        self.rect_reg = pg.RectROI([start_x, stop_x], [stop_x-start_x, stop_y-start_y])
+        self.rect_reg = pg.RectROI([start_x, start_y], [stop_x - start_x, stop_y - start_y])
         self.rect_reg.setPen(pg.mkPen("black"))
         self.image_frame.plot_widget.addItem(self.rect_reg)
 

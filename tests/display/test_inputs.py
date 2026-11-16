@@ -1,7 +1,7 @@
 #
 # This file is part of the PyMeasure package.
 #
-# Copyright (c) 2013-2025 PyMeasure Developers
+# Copyright (c) 2013-2026 PyMeasure Developers
 #
 # Permission is hereby granted, free of charge, to any person obtaining a copy
 # of this software and associated documentation files (the "Software"), to deal
@@ -22,14 +22,18 @@
 # THE SOFTWARE.
 #
 
-import pytest
 from unittest import mock
 
+import pytest
+
+from pymeasure.display.inputs import BooleanInput, ListInput, ScientificInput, VectorInput
 from pymeasure.display.Qt import QtCore
-from pymeasure.display.inputs import (ScientificInput, BooleanInput, ListInput,
-                                      VectorInput)
-from pymeasure.experiment.parameters import (BooleanParameter, ListParameter, FloatParameter,
-                                             VectorParameter)
+from pymeasure.experiment.parameters import (
+    BooleanParameter,
+    FloatParameter,
+    ListParameter,
+    VectorParameter,
+)
 
 
 @pytest.mark.parametrize("default_value", [True, False])
@@ -85,7 +89,7 @@ class TestBooleanInput:
             bool_input.set_value(not default_value)
 
             assert bool_input.get_value() == (not default_value)
-            bool_input.parameter  # lazy update
+            _ = bool_input.parameter  # lazy update
             p.assert_called_once_with(not default_value)
 
 
@@ -140,7 +144,7 @@ class TestListInput:
                         return_value=123) as p:
             for choice in choices:
                 list_input.set_value(choice)
-                list_input.parameter  # lazy update
+                _ = list_input.parameter  # lazy update
             p.assert_has_calls((mock.call(123), mock.call('abc'), mock.call(0)))
 
     def test_unit_should_append_to_strings(self, qtbot):
@@ -239,8 +243,41 @@ class TestScientificInput:
                         return_value=10.0) as p:
             # test
             sci_input.set_value(5.0)
-            sci_input.parameter  # lazy update
+            _ = sci_input.parameter  # lazy update
             p.assert_called_once_with(5.0)
+
+    def test_linear_stepBy(self, qtbot):
+        float_param = FloatParameter("potato", minimum=0, maximum=1000, default=10.0, step=2)
+        sci_input = ScientificInput(float_param)
+        qtbot.addWidget(sci_input)
+
+        sci_input.widget.stepBy(1)
+        assert sci_input.get_value() == 12.0
+        sci_input.widget.stepBy(-1)
+        assert sci_input.get_value() == 10.0
+
+    def test_log_stepBy(self, qtbot):
+        float_param = FloatParameter(
+            "potato", minimum=0, maximum=1000, default=10.0, step=10, step_type="log"
+        )
+        sci_input = ScientificInput(float_param)
+        qtbot.addWidget(sci_input)
+
+        sci_input.widget.stepBy(1)
+        assert sci_input.get_value() == 100.0
+        sci_input.widget.stepBy(-1)
+        assert sci_input.get_value() == 10.0
+        # Multiple steps at once
+        sci_input.widget.stepBy(2)
+        assert sci_input.get_value() == 1000.0
+
+    def test_log_stepBy_for_negative_value(self, qtbot):
+        float_param = FloatParameter("potato", default=-1.0, step=10, step_type="log")
+        sci_input = ScientificInput(float_param)
+        qtbot.addWidget(sci_input)
+
+        sci_input.widget.stepBy(1)
+        assert sci_input.get_value() == -0.1
 
     @pytest.mark.parametrize("locale, decimalSep", [
         [QtCore.QLocale(QtCore.QLocale.English,
@@ -259,13 +296,13 @@ class TestScientificInput:
         sci_input = ScientificInput(float_param)
 
         # Check if the modified locale is set
-        assert sci_input.locale().decimalPoint() == decimalSep
-        assert sci_input.validator.locale().decimalPoint() == decimalSep
+        assert sci_input.widget.locale().decimalPoint() == decimalSep
+        assert sci_input.widget.validator.locale().decimalPoint() == decimalSep
 
         # Check if conversion from double to text works correctly
-        assert sci_input.valueFromText(f"2{decimalSep}6") == 2.6
+        assert sci_input.widget.valueFromText(f"2{decimalSep}6") == 2.6
         # Check if conversion from text to double works correctly
-        assert sci_input.textFromValue(2.6) == f"2{decimalSep}6"
+        assert sci_input.widget.textFromValue(2.6) == f"2{decimalSep}6"
 
         # Reset the locale settings
         QtCore.QLocale.setDefault(QtCore.QLocale.system())

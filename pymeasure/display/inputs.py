@@ -1,7 +1,7 @@
 #
 # This file is part of the PyMeasure package.
 #
-# Copyright (c) 2013-2025 PyMeasure Developers
+# Copyright (c) 2013-2026 PyMeasure Developers
 #
 # Permission is hereby granted, free of charge, to any person obtaining a copy
 # of this software and associated documentation files (the "Software"), to deal
@@ -23,14 +23,22 @@
 #
 
 import logging
-
 import re
-from typing import Any, Callable, Generic, Literal, TypeVar, Union
+from collections.abc import Callable
+from typing import Any, Generic, Literal, TypeVar, cast
 
-from pymeasure.experiment.parameters import BooleanParameter, FloatParameter, IntegerParameter, ListParameter, Parameter, PhysicalParameter
 from pyqtgraph import SpinBox
 
-from .Qt import QtGui, QtWidgets, QtCore
+from pymeasure.experiment.parameters import (
+    BooleanParameter,
+    FloatParameter,
+    IntegerParameter,
+    ListParameter,
+    Parameter,
+    PhysicalParameter,
+)
+
+from .Qt import QtCore, QtGui, QtWidgets
 
 log = logging.getLogger(__name__)
 log.addHandler(logging.NullHandler())
@@ -48,7 +56,7 @@ class TrailingButton(QtWidgets.QPushButton):
             border: none;
             color: lightgray;
             }
-            
+
             QPushButton:hover {
             color: black;
             }
@@ -71,6 +79,7 @@ class Input(QtWidgets.QWidget, Generic[P, Q]):
     :param parameter: The parameter to connect to this input box.
     :attr parameter: Read-only property to access the associated parameter.
     """
+
     def __init__(self, widget: Q, parameter: P, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.setMouseTracking(True)
@@ -88,7 +97,8 @@ class Input(QtWidgets.QWidget, Generic[P, Q]):
 
         self._trailing_layout = QtWidgets.QHBoxLayout()
         self._trailing_layout.setContentsMargins(0, 0, 0, 0)
-        self._trailing_layout.setAlignment(QtCore.Qt.AlignmentFlag.AlignLeft | QtCore.Qt.AlignmentFlag.AlignVCenter)
+        self._trailing_layout.setAlignment(
+            QtCore.Qt.AlignmentFlag.AlignLeft | QtCore.Qt.AlignmentFlag.AlignVCenter)
         self._trailing_widget = QtWidgets.QWidget()
         self._trailing_widget.setLayout(self._trailing_layout)
         self.current_width = 0
@@ -115,8 +125,9 @@ class Input(QtWidgets.QWidget, Generic[P, Q]):
         if parameter.is_set():
             self.set_value(parameter.value)
 
-        if hasattr(parameter, 'units') and parameter.units:
-            self.set_units(" %s" % parameter.units)
+        units = getattr(parameter, 'units', None)
+        if units:
+            self.set_units(f" {units}")
 
         self.setToolTip(parameter._cli_help_fields())
 
@@ -157,7 +168,7 @@ class Input(QtWidgets.QWidget, Generic[P, Q]):
         return super().event(e)
 
     @property
-    def parameter(self) -> Union[Parameter, None]:
+    def parameter(self) -> Parameter | None:
         """
         The connected parameter object. Read-only property; see
         :meth:`set_parameter`.
@@ -192,7 +203,8 @@ class IntegerInput(Input[IntegerParameter, QtWidgets.QSpinBox]):
     """
 
     def __init__(self, parameter, parent=None, **kwargs):
-        super().__init__(widget = QtWidgets.QSpinBox(), parameter=parameter, parent=parent, **kwargs)
+        super().__init__(widget=QtWidgets.QSpinBox(), parameter=parameter, parent=parent,
+                         **kwargs)
         if parameter.step:
             self.widget.setButtonSymbols(QtWidgets.QAbstractSpinBox.ButtonSymbols.UpDownArrows)
             self.widget.setSingleStep(parameter.step)
@@ -257,24 +269,27 @@ class ListInput(Input[ListParameter, QtWidgets.QComboBox]):
         # Override from :class:`Input`
         try:
             if hasattr(parameter, 'units') and parameter.units:
-                suffix = " %s" % parameter.units
+                suffix = f" {parameter.units}"
             else:
                 suffix = ""
 
-            self._stringChoices = tuple((str(choice) + suffix) for choice in parameter.choices)
-        except TypeError:  # choices is None
-            self._stringChoices = tuple()
+            choices = parameter.choices
+            self._stringChoices = (
+                tuple((str(choice) + suffix) for choice in choices) if choices is not None else ()
+            )
+        except TypeError:  # choices is not iterable
+            self._stringChoices = ()
         self.widget.clear()
         self.widget.addItems(self._stringChoices)
         super().set_parameter(parameter)
 
     def set_value(self, value):
         try:
-            index = self._parameter.choices.index(value)
+            index = cast(tuple, self._parameter.choices).index(value)
             self.widget.setCurrentIndex(index)
-        except (TypeError, ValueError) as e:  # no choices or choice invalid
+        except (AttributeError, TypeError, ValueError) as e:  # no choices or choice invalid
             raise ValueError("Invalid choice for parameter. "
-                             "Must be one of %s" % str(self._parameter.choices)) from e
+                             f"Must be one of {self._parameter.choices!s}") from e
 
     # TODO: This class does not cleanly separate
     # between value and units, setting units in set_parameter
@@ -286,7 +301,87 @@ class ListInput(Input[ListParameter, QtWidgets.QComboBox]):
         return self._parameter.choices[self.widget.currentIndex()]
 
 
-class ScientificInput(Input[FloatParameter, QtWidgets.QDoubleSpinBox]):
+class ScientificSpinBox(QtWidgets.QDoubleSpinBox):
+    """
+    :class:`QtWidgets.QDoubleSpinBox` that displays and accepts values in scientific notation when
+    appropriate, adds the units of its :class:`FloatParameter` to the text, and can step
+    logarithmically (:code:`step_type="log"`). Connect the parameter with :meth:`set_parameter`.
+    """
+
+    def __init__(self, parent: QtWidgets.QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._parameter: FloatParameter | None = None
+        self.validator: QtGui.QDoubleValidator | None = None
+
+    def set_parameter(self, parameter: FloatParameter) -> None:
+        self._parameter = parameter  # required before setDecimals, which calls self.validate
+        self.validator = QtGui.QDoubleValidator(
+            parameter.minimum,
+            parameter.maximum,
+            parameter.decimals,
+            self)
+        self.setDecimals(parameter.decimals)
+        self.setMinimum(parameter.minimum)
+        self.setMaximum(parameter.maximum)
+        self.validator.setNotation(QtGui.QDoubleValidator.Notation.ScientificNotation)
+
+    def validate(self, input: str | None, pos: int) -> tuple[QtGui.QValidator.State, str, int]:
+        if self.validator is None or self._parameter is None:
+            return super().validate(input, pos)
+        if input is not None and self._parameter.units:
+            input = input[:-(len(self._parameter.units) + 1)]
+            result = self.validator.validate(input, pos)
+            return result[0], result[1] + f" {self._parameter.units}", result[2]
+        else:
+            return self.validator.validate(input, pos)
+
+    def fixCase(self, text: str) -> None:
+        self.lineEdit().setText(text.lower())
+
+    def toDouble(self, string: str) -> float:
+        value, success = self.validator.locale().toDouble(string)
+        if not success:
+            raise ValueError('String could not be converted to a double')
+        else:
+            return value
+
+    def toString(self, value: float, format: str = 'g', precision: int = 6) -> str:
+        return self.validator.locale().toString(value, format, precision)
+
+    def valueFromText(self, text: str | None) -> float:
+        text = str(text)
+        if self._parameter.units:
+            text = text[:-(len(self._parameter.units) + 1)]
+        try:
+            val = self.toDouble(text)
+        except ValueError:
+            val = self._parameter.default
+        if val is None:
+            val = 0.0
+        return val
+
+    def textFromValue(self, v: float) -> str:
+        string = self.toString(v).replace("e+", "e")
+        string = re.sub(r"e(-?)0*(\d+)", r"e\1\2", string)
+        return string
+
+    def stepBy(self, steps: int) -> None:
+        value = self.value()
+        if self._parameter.step_type == "log":
+            sign = 1 if value >= 0 else -1
+            self.setValue(value * cast(float, self._parameter.step) ** (sign * steps))
+        else:
+            super().stepBy(steps)
+
+    def stepEnabled(self):
+        if self._parameter is not None and self._parameter.step:
+            return QtWidgets.QAbstractSpinBox.StepEnabledFlag.StepUpEnabled | \
+                QtWidgets.QAbstractSpinBox.StepEnabledFlag.StepDownEnabled
+        else:
+            return QtWidgets.QAbstractSpinBox.StepEnabledFlag.StepNone
+
+
+class ScientificInput(Input[FloatParameter, ScientificSpinBox]):
     """
     Spinner input box for floating-point values, connected to a
     :class:`FloatParameter`. This box will display and accept values in
@@ -298,7 +393,7 @@ class ScientificInput(Input[FloatParameter, QtWidgets.QDoubleSpinBox]):
     """
 
     def __init__(self, parameter: FloatParameter, parent=None, **kwargs):
-        super().__init__(widget=QtWidgets.QDoubleSpinBox(), parameter=parameter, parent=parent, **kwargs)
+        super().__init__(widget=ScientificSpinBox(), parameter=parameter, parent=parent, **kwargs)
         if parameter.step:
             self.widget.setButtonSymbols(QtWidgets.QAbstractSpinBox.ButtonSymbols.UpDownArrows)
             self.widget.setSingleStep(parameter.step)
@@ -306,22 +401,12 @@ class ScientificInput(Input[FloatParameter, QtWidgets.QDoubleSpinBox]):
         else:
             self.widget.setButtonSymbols(QtWidgets.QAbstractSpinBox.ButtonSymbols.NoButtons)
 
-    def set_parameter(self, parameter):
+    def set_parameter(self, parameter: FloatParameter) -> None:
         # Override from :class:`Input`
-        self._parameter = parameter  # required before super().set_parameter
-        # for self.validate which is called when setting self.decimals()
-        self.validator = QtGui.QDoubleValidator(
-            parameter.minimum,
-            parameter.maximum,
-            parameter.decimals,
-            self)
-        self.widget.setDecimals(parameter.decimals)
-        self.widget.setMinimum(parameter.minimum)
-        self.widget.setMaximum(parameter.maximum)
-        self.validator.setNotation(QtGui.QDoubleValidator.Notation.ScientificNotation)
-        super().set_parameter(parameter)  # default gets set here, after min/max
+        self.widget.set_parameter(parameter)  # min/max/decimals first, then the default value
+        super().set_parameter(parameter)
 
-    def set_value(self, value):
+    def set_value(self, value) -> None:
         self.widget.setValue(value)
 
     def set_units(self, units: str) -> None:
@@ -330,70 +415,29 @@ class ScientificInput(Input[FloatParameter, QtWidgets.QDoubleSpinBox]):
     def get_value(self) -> Any:
         return self.widget.value()
 
-    def validate(self, text, pos):
-        if self._parameter.units:
-            text = text[:-(len(self._parameter.units) + 1)]
-            result = self.validator.validate(text, pos)
-            return result[0], result[1] + " %s" % self._parameter.units, result[2]
-        else:
-            return self.validator.validate(text, pos)
-
-    def fixCase(self, text):
-        self.widget.lineEdit().setText(text.toLower())
-
-    def toDouble(self, string):
-        value, success = self.validator.locale().toDouble(string)
-        if not success:
-            raise ValueError('String could not be converted to a double')
-        else:
-            return value
-
-    def toString(self, value, format='g', precision=6):
-        return self.validator.locale().toString(value, format, precision)
-
-    def valueFromText(self, text):
-        text = str(text)
-        if self._parameter.units:
-            text = text[:-(len(self._parameter.units) + 1)]
-        try:
-            val = self.toDouble(text)
-        except ValueError:
-            val = self._parameter.default
-        return val
-
-    def textFromValue(self, value):
-        string = self.toString(value).replace("e+", "e")
-        string = re.sub(r"e(-?)0*(\d+)", r"e\1\2", string)
-        return string
-
-    def stepEnabled(self):
-        if self.parameter.step:
-            return QtWidgets.QAbstractSpinBox.StepEnabledFlag.StepUpEnabled | \
-                QtWidgets.QAbstractSpinBox.StepEnabledFlag.StepDownEnabled
-        else:
-            return QtWidgets.QAbstractSpinBox.StepEnabledFlag.StepNone
-
 
 class VectorInput(StringInput):
     """
     String input box connected to a :class:`VectorParameter`. This box will
     display and accept lists.
     """
-    #TODO: Turn this into an editable list with item delegates
+    # TODO: Turn this into an editable list with item delegates
+
     def set_value(self, value):  # override the method from StringInput
         value = "[" + ", ".join(map(str, value)) + "]"
         # QtWidgets.QLineEdit has a setText() method instead of setValue()
         self.widget.setText(value)
 
+
 class UncertaintyWidget(QtWidgets.QWidget):
     _uncertainty_type: Literal["absolute", "relative", "percentage"]
-    
+
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self.h_layout = QtWidgets.QHBoxLayout(self)
         self.h_layout.setAlignment(QtCore.Qt.AlignmentFlag.AlignVCenter)
-        self.h_layout.setContentsMargins(0,0,0,0)
-        
+        self.h_layout.setContentsMargins(0, 0, 0, 0)
+
         self._uncertainty_type = "absolute"
         self._units = ""
 
@@ -422,23 +466,24 @@ class UncertaintyWidget(QtWidgets.QWidget):
             self.uncert_spin_box.setSuffix("")
         else:
             raise ValueError("Uncertainty type must be absolute, relative, or percentage!")
-        
+
         self._uncertainty_type = value
-    
+
     def set_value(self, value: list):
         self.quant_spin_box.setValue(value[0])
         self.uncert_spin_box.setValue(value[1])
-        
+
     def get_value(self) -> list:
         return [self.quant_spin_box.value(), self.uncert_spin_box.value()]
 
     def set_units(self, units: str):
         self._units = units
         self.quant_spin_box.setSuffix(units)
-        
+
+
 class UncertQuantInput(Input[PhysicalParameter, UncertaintyWidget]):
     _default_uncert: Literal["absolute", "relative", "percentage"]
-    
+
     def __init__(self, parameter: PhysicalParameter, *args, **kwargs):
         super().__init__(UncertaintyWidget(), parameter, *args, **kwargs)
         self.pm_button = TrailingButton("±", self._change_uncert_type, "Change uncertainty type")
@@ -467,9 +512,9 @@ class UncertQuantInput(Input[PhysicalParameter, UncertaintyWidget]):
         if self.widget.uncertainty_type == "absolute":
             self.widget.uncertainty_type = "percentage"
             curr_val = self.widget.get_value()
-            self.widget.set_value([curr_val[0], curr_val[1]/curr_val[0]*100])
+            self.widget.set_value([curr_val[0], curr_val[1] / curr_val[0] * 100])
         else:
             self.widget.uncertainty_type = "absolute"
             curr_val = self.widget.get_value()
-            self.widget.set_value([curr_val[0], curr_val[0]*curr_val[1]/100])
+            self.widget.set_value([curr_val[0], curr_val[0] * curr_val[1] / 100])
 

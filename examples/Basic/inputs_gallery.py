@@ -30,42 +30,46 @@ Run the program by changing to the directory containing this file and calling:
 python gui.py
 
 """
+import logging
 import sys
+
 import numpy as np
 
-from pymeasure.display.widgets import LogWidget, PlotWidget, ImageWidget
+from pymeasure.display.Qt import QtWidgets
+from pymeasure.display.widgets import ImageWidget, LogWidget, PlotWidget
 from pymeasure.display.windows.managed_window import ManagedWindowBase
 from pymeasure.experiment import (
-    Procedure,
-    IntegerParameter,
-    Parameter,
-    FloatParameter,
     BooleanParameter,
+    FloatParameter,
+    IntegerParameter,
     ListParameter,
+    Parameter,
+    Procedure,
     VectorParameter,
 )
-from pymeasure.display.Qt import QtWidgets
-from pymeasure.display.windows import ManagedWindow
-
-import logging
-
-from pymeasure.experiment.parameters import PhysicalParameter, ParameterGroup, Range1DParameterGroup, Range2DParameterGroup
+from pymeasure.experiment.parameters import (
+    ParameterGroup,
+    Range1DParameterGroup,
+    Range2DParameterGroup,
+)
 
 log = logging.getLogger("")
 log.addHandler(logging.NullHandler())
 
+
 class TestProcedure(Procedure):
     float_param = FloatParameter("Float Parameter", units="s", default=0.2, step=0.01)
-    int_param = IntegerParameter("Integer Parameter", units="A", default = 1, step=1)
-    param = Parameter("Parameter", default = "text")
+    int_param = IntegerParameter("Integer Parameter", units="A", default=1, step=1)
+    param = Parameter("Parameter", default="text")
     bool_param = BooleanParameter("Boolean Parameter", default=True)
     list_param = ListParameter(
-        "List Parameter", choices = ['Choice 1', 'Choice 2', 'Choice 3'], group_name="Test", default="Choice 1",
+        "List Parameter", choices=['Choice 1', 'Choice 2', 'Choice 3'], group_name="Test",
+        default="Choice 1",
     )
     vector_param = VectorParameter(
-        "Vector Parameter", default = [1,2,3], units = "m", group_name="Test"
+        "Vector Parameter", default=[1, 2, 3], units="m", group_name="Test"
     )
-    #phys_param = PhysicalParameter("Physical Parameter",group_by="bool_param", default = [20,3])
+    # phys_param = PhysicalParameter("Physical Parameter",group_by="bool_param", default = [20,3])
     param_group = ParameterGroup("Test group",
                                  group_by={"bool_param": True},
                                  test1=FloatParameter("test1", default=0),
@@ -79,7 +83,8 @@ class TestProcedure(Procedure):
                                      no_step_kwargs_x={"units": None},
                                      no_step_kwargs_y={"units": None})
 
-    DATA_COLUMNS = ["wavelength (nm)", "intensity (a.u.)", "voltage1 (V)", "voltage2 (V)", "current (A)"]
+    DATA_COLUMNS = ["wavelength (nm)", "intensity (a.u.)", "voltage1 (V)", "voltage2 (V)",
+                    "current (A)"]
 
     def startup(self):
         pass
@@ -92,8 +97,7 @@ class TestProcedure(Procedure):
                       "voltage2 (V)": voltage2,
                       "current (A)": np.random.rand()}
             self.emit("results", result)
-            
-    
+
     def shutdown(self):
         pass
 
@@ -111,7 +115,8 @@ class MainWindow(ManagedWindowBase):
                   "voltages",
                   ]
         widgets = [LogWidget("Log"),
-                   PlotWidget("Plot", ["wavelength (nm)", "intensity (a.u.)"], selectors=["wl_range"]),
+                   PlotWidget("Plot", ["wavelength (nm)", "intensity (a.u.)"],
+                              selectors=["wl_range"]),
                    ImageWidget("Image", ["voltage1 (V)",
                                          "voltage2 (V)",
                                          "current (A)"],
@@ -119,12 +124,13 @@ class MainWindow(ManagedWindowBase):
                                "voltage2 (V)",
                                selectors=["voltages"]),]
         super().__init__(
-            procedure_class = TestProcedure,
-            inputs = inputs,
-            displays = ["float_param"],
-            widget_list = widgets
+            procedure_class=TestProcedure,
+            inputs=inputs,
+            displays=["float_param"],
+            widget_list=widgets
         )
         self.setWindowTitle("GUI Example")
+
 
 if __name__ == "__main__":
     app = QtWidgets.QApplication(sys.argv)

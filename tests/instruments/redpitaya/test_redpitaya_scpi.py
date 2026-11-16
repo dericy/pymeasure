@@ -1,9 +1,33 @@
+#
+# This file is part of the PyMeasure package.
+#
+# Copyright (c) 2013-2026 PyMeasure Developers
+#
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+#
+# The above copyright notice and this permission notice shall be included in
+# all copies or substantial portions of the Software.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+# THE SOFTWARE.
+#
+
 import datetime
 
 import pytest
 
-from pymeasure.test import expected_protocol
 from pymeasure.instruments.redpitaya import RedPitayaScpi
+from pymeasure.test import expected_protocol
 
 
 def test_init():
@@ -44,10 +68,6 @@ def test_acq_buffer_filled_getter():
      'ASCII'),
     ([(b'ACQ:DATA:FORMAT BIN', None)],
      'BIN'),
-    ([(b'ACQ:DATA:FORMAT BIN', None)],
-     'BIN'),
-    ([(b'ACQ:DATA:FORMAT ASCII', None)],
-     'ASCII'),
 ))
 def test_acq_format_setter(comm_pairs, value):
     with expected_protocol(
@@ -250,7 +270,7 @@ def test_board_name_getter():
 def test_date_setter():
     with expected_protocol(
             RedPitayaScpi,
-            [(b'SYST:DATE 2023,12,22', None)],
+            [(b'SYST:DATE "2023-12-22"', None)],
     ) as inst:
         inst.date = datetime.date(2023, 12, 22)
 
@@ -258,7 +278,7 @@ def test_date_setter():
 def test_date_getter():
     with expected_protocol(
             RedPitayaScpi,
-            [(b'SYST:DATE?', b'2023,12,22')],
+            [(b'SYST:DATE?', b'2023-12-22')],
     ) as inst:
         assert inst.date == datetime.date(2023, 12, 22)
 
@@ -362,7 +382,7 @@ def test_led_getter():
 def test_time_setter():
     with expected_protocol(
             RedPitayaScpi,
-            [(b'SYST:TIME 13,07,20', None)],
+            [(b'SYST:TIME "13:07:20"', None)],
     ) as inst:
         inst.time = datetime.time(13, 7, 20)
 
@@ -370,7 +390,7 @@ def test_time_setter():
 def test_time_getter():
     with expected_protocol(
             RedPitayaScpi,
-            [(b'SYST:TIME?', '13,07,20')],
+            [(b'SYST:TIME?', '13:07:20')],
     ) as inst:
         assert inst.time == datetime.time(13, 7, 20)
 
@@ -389,3 +409,4 @@ def test_digital_reset():
             [(b'DIG:RST', None)],
     ) as inst:
         assert inst.digital_reset() is None
+

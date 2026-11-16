@@ -1,7 +1,7 @@
 #
 # This file is part of the PyMeasure package.
 #
-# Copyright (c) 2013-2025 PyMeasure Developers
+# Copyright (c) 2013-2026 PyMeasure Developers
 #
 # Permission is hereby granted, free of charge, to any person obtaining a copy
 # of this software and associated documentation files (the "Software"), to deal
@@ -23,7 +23,6 @@
 #
 
 import logging
-
 from threading import Event
 
 from .Qt import QtCore
@@ -37,12 +36,12 @@ class StoppableQThread(QtCore.QThread):
     to be stopped by a thread-safe method call
     """
 
-    def __init__(self, parent=None):
+    def __init__(self, parent: QtCore.QObject | None = None) -> None:
         super().__init__(parent)
         self._should_stop = Event()
         self._should_stop.clear()
 
-    def join(self, timeout=0):
+    def join(self, timeout: float | None = 0) -> None:
         """ Joins the current thread and forces it to stop after
         the timeout if necessary
 
@@ -53,12 +52,11 @@ class StoppableQThread(QtCore.QThread):
             self.stop()
         super().wait()
 
-    def stop(self):
+    def stop(self) -> None:
         self._should_stop.set()
 
-    def should_stop(self):
+    def should_stop(self) -> bool:
         return self._should_stop.is_set()
 
-    def __repr__(self):
-        return "<{}(should_stop={})>".format(
-            self.__class__.__name__, self.should_stop())
+    def __repr__(self) -> str:
+        return f"<{self.__class__.__name__}(should_stop={self.should_stop()})>"

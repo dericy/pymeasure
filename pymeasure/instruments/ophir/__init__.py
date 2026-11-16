@@ -1,7 +1,7 @@
 #
 # This file is part of the PyMeasure package.
 #
-# Copyright (c) 2013-2025 PyMeasure Developers
+# Copyright (c) 2013-2026 PyMeasure Developers
 #
 # Permission is hereby granted, free of charge, to any person obtaining a copy
 # of this software and associated documentation files (the "Software"), to deal
@@ -22,10 +22,7 @@
 # THE SOFTWARE.
 #
 
-from typing import Protocol, Union, Callable, Any
-
-GroupConditionType = Union[bool,Callable[[Any],bool]]
-GroupByType = Union[str,list[str],tuple[str],dict[str,GroupConditionType]]
-
-class SupportsStr(Protocol):
-    def __str__(self) -> str: ...
+from .nova import Nova
+from .novaII import NovaII
+from .ophir_base import OphirBase
+from .vega import Vega

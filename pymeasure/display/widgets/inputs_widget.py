@@ -1,7 +1,7 @@
 #
 # This file is part of the PyMeasure package.
 #
-# Copyright (c) 2013-2025 PyMeasure Developers
+# Copyright (c) 2013-2026 PyMeasure Developers
 #
 # Permission is hereby granted, free of charge, to any person obtaining a copy
 # of this software and associated documentation files (the "Software"), to deal
@@ -23,15 +23,23 @@
 #
 
 import logging
-
+from collections.abc import Mapping, Sequence
 from functools import partial
-from typing import Union, Type
 
-from ..inputs import (BooleanInput, Input, IntegerInput, ListInput, ScientificInput,
-                      StringInput, UncertQuantInput, VectorInput)
-from ..Qt import QtWidgets, QtCore
-from ...experiment import parameters, Procedure
-from ..input_groups import Range1DInputGroup, Range2DInputGroup, InputGroup, NO_LABEL_INPUTS
+from ...experiment import parameters
+from ...experiment.procedure import Procedure
+from ..input_groups import InputGroup, Range1DInputGroup, Range2DInputGroup
+from ..inputs import (
+    BooleanInput,
+    Input,
+    IntegerInput,
+    ListInput,
+    ScientificInput,
+    StringInput,
+    UncertQuantInput,
+    VectorInput,
+)
+from ..Qt import QtCore, QtWidgets
 
 log = logging.getLogger(__name__)
 log.addHandler(logging.NullHandler())
@@ -43,16 +51,21 @@ class InputsWidget(QtWidgets.QWidget):
     """
     selection_triggered = QtCore.Signal(str, str, object)
 
-    def __init__(self,
-                 procedure_class: Type[Procedure],
-                 inputs: Union[tuple[str], None] = None,
-                 hide_groups: bool = True,
-                 inputs_in_scrollarea: bool = False,
-                 **kwargs):
-        super().__init__(**kwargs)
+    # tuple of Input classes that do not need an external label
+    NO_LABEL_INPUTS = (BooleanInput,)
+
+    def __init__(
+        self,
+        procedure_class: type[Procedure],
+        inputs: Sequence[str] | None = None,
+        parent: QtWidgets.QWidget | None = None,
+        hide_groups: bool = True,
+        inputs_in_scrollarea: bool = False,
+    ):
+        super().__init__(parent=parent)
         self._procedure_class = procedure_class
         self._procedure = procedure_class()
-        self._inputs = inputs if inputs else ()
+        self._inputs = inputs or []
         self._setup_ui()
         self._layout(inputs_in_scrollarea)
         self._hide_groups = hide_groups
@@ -69,20 +82,22 @@ class InputsWidget(QtWidgets.QWidget):
         for name in self._inputs:
             parameter = parameter_objects[name]
 
-            if isinstance(parameter,parameters.ParameterGroup):
-                element = InputGroup(parameter)
-
-            elif isinstance(parameter, parameters.Range1DParameterGroup):
+            if isinstance(parameter, parameters.Range1DParameterGroup):
                 element = Range1DInputGroup(parameter)
-                element.selection_triggered.connect(partial(self.selection_triggered.emit, name, "1D"))
+                element.selection_triggered.connect(
+                    partial(self.selection_triggered.emit, name, "1D"))
 
             elif isinstance(parameter, parameters.Range2DParameterGroup):
                 element = Range2DInputGroup(parameter)
-                element.selection_triggered.connect(partial(self.selection_triggered.emit, name, "2D"))
-                
+                element.selection_triggered.connect(
+                    partial(self.selection_triggered.emit, name, "2D"))
+
+            elif isinstance(parameter, parameters.ParameterGroup):
+                element = InputGroup(parameter)
+
             elif parameter.ui_class is not None:
                 element = parameter.ui_class(parameter)
-                
+
             elif isinstance(parameter, parameters.FloatParameter):
                 element = ScientificInput(parameter)
 
@@ -105,8 +120,8 @@ class InputsWidget(QtWidgets.QWidget):
                 element = StringInput(parameter)
 
             setattr(self, name, element)
-        
-    def _layout(self, inputs_in_scrollarea):
+
+    def _layout(self, inputs_in_scrollarea: bool) -> None:
         vbox = QtWidgets.QVBoxLayout(self)
         vbox.setSpacing(6)
         vbox.setContentsMargins(0, 0, 0, 0)
@@ -115,9 +130,9 @@ class InputsWidget(QtWidgets.QWidget):
         parameters = self._procedure.parameter_objects()
         for name in self._inputs:
             input_inst: Input = getattr(self, name)
-            if not isinstance(input_inst, NO_LABEL_INPUTS) and not isinstance(input_inst, InputGroup):
+            if not isinstance(input_inst, (*self.NO_LABEL_INPUTS, InputGroup)):
                 label = QtWidgets.QLabel(self)
-                label.setText("%s:" % parameters[name].name)
+                label.setText(f"{parameters[name].name}:")
                 vbox.addWidget(label)
                 vbox.addWidget(input_inst)
                 self.labels[name] = label
@@ -147,7 +162,7 @@ class InputsWidget(QtWidgets.QWidget):
         parameters = self._procedure.parameter_objects()
         for name in self._inputs:
             parameter = parameters[name]
-            
+
             group_state = {g: True for g in parameter.group_by}
 
             for group_name, condition in parameter.group_by.items():
@@ -163,7 +178,7 @@ class InputsWidget(QtWidgets.QWidget):
 
                 groups[group_name].append((name, condition, group_state))
 
-        #TODO: Functions for grouping should not depend on Qt.
+        # TODO: Functions for grouping should not depend on Qt.
         for group_name, group in groups.items():
             toggle = partial(self.toggle_group, group_name=group_name, group=group)
             group_el = getattr(self, group_name)
@@ -203,12 +218,12 @@ class InputsWidget(QtWidgets.QWidget):
                 else:
                     self.labels[name].setDisabled(not visible)
 
-    def set_parameters(self, parameter_objects):
+    def set_parameters(self, parameter_objects: Mapping[str, parameters.Parameter]) -> None:
         for name in self._inputs:
             element = getattr(self, name)
             element.set_parameter(parameter_objects[name])
 
-    def get_procedure(self):
+    def get_procedure(self) -> Procedure:
         """ Returns the current procedure """
         self._procedure = self._procedure_class()
         parameter_values = {}

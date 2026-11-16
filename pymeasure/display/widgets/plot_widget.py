@@ -1,7 +1,7 @@
 #
 # This file is part of the PyMeasure package.
 #
-# Copyright (c) 2013-2025 PyMeasure Developers
+# Copyright (c) 2013-2026 PyMeasure Developers
 #
 # Permission is hereby granted, free of charge, to any person obtaining a copy
 # of this software and associated documentation files (the "Software"), to deal
@@ -23,29 +23,40 @@
 #
 
 import logging
+from collections.abc import Sequence
 
-from numpy.random import default_rng
 import pyqtgraph as pg
 
+from ...experiment.results import Results
 from ..curves import ResultsCurve
-from ..Qt import QtCore, QtWidgets, QtGui
-from .tab_widget import TabWidget
+from ..Qt import QtCore, QtGui, QtWidgets
 from .plot_frame import PlotFrame
+from .tab_widget import DEFAULT_COLOR, TabWidget
 
 log = logging.getLogger(__name__)
 log.addHandler(logging.NullHandler())
 
 
-class PlotWidget(TabWidget, QtWidgets.QWidget):
+class PlotWidget(TabWidget[ResultsCurve], QtWidgets.QWidget):
     """ Extends :class:`PlotFrame<pymeasure.display.widgets.plot_frame.PlotFrame>`
     to allow different columns of the data to be dynamically chosen
     """
-    
-    def __init__(self, name, columns, x_axis=None, y_axis=None, refresh_time=0.2,
-                 check_status=True, linewidth=1, selectors = [], parent=None):
-        super().__init__(name, parent)
+
+    def __init__(
+        self,
+        name: str,
+        columns: Sequence[str],
+        x_axis: str | None = None,
+        y_axis: str | None = None,
+        refresh_time: float = 0.2,
+        check_status: bool = True,
+        linewidth: float = 1,
+        selectors: Sequence[str] | None = None,
+        parent: QtWidgets.QWidget | None = None,
+    ):
+        super().__init__(name=name, parent=parent)
+        self.selectors = list(selectors) if selectors else []
         self.columns = columns
-        self.selectors = selectors
         self.refresh_time = refresh_time
         self.check_status = check_status
         self.linewidth = linewidth
@@ -58,7 +69,7 @@ class PlotWidget(TabWidget, QtWidgets.QWidget):
             self.columns_y.setCurrentIndex(self.columns_y.findText(y_axis))
             self.plot_frame.change_y_axis(y_axis)
 
-    def _setup_ui(self):
+    def _setup_ui(self) -> None:
         self.columns_x_label = QtWidgets.QLabel(self)
         self.columns_x_label.setMaximumSize(QtCore.QSize(45, 16777215))
         self.columns_x_label.setText('X Axis:')
@@ -85,13 +96,13 @@ class PlotWidget(TabWidget, QtWidgets.QWidget):
         self.roi = None
         self.selection_active = False
         self.start_pos = None
-       
+
         self.updated = self.plot_frame.updated
-        self.plot = self.plot_frame.plot
+        self.plot: pg.PlotItem | None = self.plot_frame.plot
         self.columns_x.setCurrentIndex(0)
         self.columns_y.setCurrentIndex(1)
 
-    def _layout(self):
+    def _layout(self) -> None:
         vbox = QtWidgets.QVBoxLayout(self)
         vbox.setSpacing(0)
 
@@ -107,10 +118,10 @@ class PlotWidget(TabWidget, QtWidgets.QWidget):
         vbox.addWidget(self.plot_frame)
         self.setLayout(vbox)
 
-    def sizeHint(self):
+    def sizeHint(self) -> QtCore.QSize:
         return QtCore.QSize(300, 600)
 
-    def new_curve(self, results, color=pg.intColor(0), **kwargs):
+    def new_curve(self, results: Results, color=DEFAULT_COLOR, **kwargs) -> ResultsCurve:
         if 'pen' not in kwargs:
             kwargs['pen'] = pg.mkPen(color=color, width=self.linewidth)
         if 'antialias' not in kwargs:
@@ -121,32 +132,38 @@ class PlotWidget(TabWidget, QtWidgets.QWidget):
                              y=self.plot_frame.y_axis,
                              **kwargs,
                              )
-        curve.setSymbol(None)
+        curve.setSymbol(None)  # type: ignore[arg-type]  # pyqtgraph supports None to disable scatter
         curve.setSymbolBrush(None)
         return curve
 
-    def update_x_column(self, index):
+    def update_x_column(self, index: int) -> None:
         axis = self.columns_x.itemText(index)
         self.plot_frame.change_x_axis(axis)
 
-    def update_y_column(self, index):
+    def update_y_column(self, index: int) -> None:
         axis = self.columns_y.itemText(index)
         self.plot_frame.change_y_axis(axis)
 
-    def load(self, curve):
-        curve.x = self.columns_x.currentText()
-        curve.y = self.columns_y.currentText()
+    def load(self, curve: ResultsCurve) -> None:
+        plot = self.plot
+        if plot is None:
+            return
+        curve.x_label = self.columns_x.currentText()
+        curve.y_label = self.columns_y.currentText()
         curve.update_data()
-        self.plot.addItem(curve)
+        plot.addItem(curve)
 
-    def remove(self, curve):
-        self.plot.removeItem(curve)
+    def remove(self, curve: ResultsCurve) -> None:
+        plot = self.plot
+        if plot is None:
+            return
+        plot.removeItem(curve)
 
-    def set_color(self, curve, color):
+    def set_color(self, curve: ResultsCurve, color) -> None:
         """ Change the color of the pen of the curve """
         curve.set_color(color)
 
-    def preview_widget(self, parent=None):
+    def preview_widget(self, parent: QtWidgets.QWidget | None = None) -> "PlotWidget":
         """ Return a widget suitable for preview during loading """
         return PlotWidget("Plot preview",
                           self.columns,
@@ -155,14 +172,60 @@ class PlotWidget(TabWidget, QtWidgets.QWidget):
                           parent=parent,
                           )
 
-    def clear_widget(self):
-        self.plot.clear()
+    def clear_widget(self) -> None:
+        plot = self.plot
+        if plot is None:
+            return
+        plot.clear()
+
+    def closeEvent(self, a0: QtGui.QCloseEvent | None) -> None:
+        self._teardown_frame()
+        super().closeEvent(a0)
+
+    def event(self, a0: QtCore.QEvent | None) -> bool:
+        if a0 is None:
+            return super().event(a0)
+        if a0.type() == QtCore.QEvent.Type.DeferredDelete:
+            # Only the widget a deferred delete applies to receives it; the contained
+            # frame is torn down explicitly here.
+            self._teardown_frame()
+        elif a0.type() == QtCore.QEvent.Type.ParentChange:
+            # Reparenting changes the ancestor window whose close has to reach the frame.
+            # Reinstalling the filter keeps never-shown frames covered as well.
+            self._reinstall_window_filter()
+        return super().event(a0)
+
+    def _teardown_frame(self) -> None:
+        """Tear down the contained plot frame, if it still exists."""
+        try:
+            frame = getattr(self, "plot_frame", None)
+        except RuntimeError:  # the C/C++ object is gone already
+            frame = None
+        if frame is not None:
+            try:
+                frame._teardown()
+            except (RuntimeError, TypeError, AttributeError):
+                pass
+        # ``plot`` aliases the plot item of the frame, which is gone after teardown.
+        self.plot = None
+
+    def _reinstall_window_filter(self) -> None:
+        """Reinstall the frame's event filter on the window it now belongs to."""
+        try:
+            frame = getattr(self, "plot_frame", None)
+        except RuntimeError:  # the C/C++ object is gone already
+            frame = None
+        if frame is not None:
+            try:
+                frame._install_window_filter()
+            except (RuntimeError, TypeError, AttributeError):
+                pass
 
     def selection_tags(self) -> list[str]:
         return ["1D"]
-    
-    def enter_selection_mode(self, initial_range):
-        super().enter_selection_mode()
+
+    def enter_selection_mode(self, initial_range: tuple) -> None:
+        super().enter_selection_mode(initial_range)
         self.linear_reg = pg.LinearRegionItem()
         self.linear_reg.setRegion(initial_range)
         self.plot_frame.plot_widget.addItem(self.linear_reg)

@@ -113,3 +113,9 @@ settings.json
 
 # Pyright
 pyrightconfig.json
+
+# uv lock file
+uv.lock
+
+# macOS
+**/.DS_Store

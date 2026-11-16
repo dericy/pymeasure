@@ -1,7 +1,7 @@
 #
 # This file is part of the PyMeasure package.
 #
-# Copyright (c) 2013-2025 PyMeasure Developers
+# Copyright (c) 2013-2026 PyMeasure Developers
 #
 # Permission is hereby granted, free of charge, to any person obtaining a copy
 # of this software and associated documentation files (the "Software"), to deal
@@ -22,19 +22,97 @@
 # THE SOFTWARE.
 #
 
-from typing import Any, Generic, Literal, TypeVar, Union
-import numpy as np
-from qtpy import QtWidgets
+from __future__ import annotations
+
 import json
+from collections.abc import Callable
+from typing import Any, Generic, Literal, TypeVar, overload
 
-from pymeasure.typing import GroupByType, GroupConditionType, SupportsStr
+import numpy as np
 
-T = TypeVar("T")
+T = TypeVar('T')
 
-class Parameter(Generic[T]):
+
+class _InstanceValueDescriptor(Generic[T]):
+    """Base class for descriptors that store their value on the parameter object.
+
+    The descriptor resolves the parameter object stored on `obj._parameters`
+    (or `obj._metadata` for Metadata, determined by `_container_attr`) rather
+    than stashing the raw value in a side dict, eagerly converting
+    assignments via the parameter's `value` setter. Assigning `None` clears
+    the value (the unset sentinel) without invoking `convert`.
+    """
+
+    _attr_name: str = ""
+    _container_attr: str = "_parameters"
+
+    def __set_name__(self, owner: type, name: str) -> None:
+        """Record the attribute name under which the descriptor is installed."""
+        self._attr_name = name
+
+    @overload
+    def __get__(self, obj: None, objtype: type) -> _InstanceValueDescriptor[T]: ...
+
+    @overload
+    def __get__(self, obj: object, objtype: type) -> T: ...
+
+    def __get__(self, obj: None | object, objtype: type | None = None):
+        """Return the parameter value, or ``self`` for class-level access.
+
+        When no parameter container (or no matching entry) is present, fall
+        back to the raw value stored on the instance to mirror ``__set__``.
+        """
+        if obj is None:
+            return self
+        container = getattr(obj, self._container_attr, None)
+        if container is None or self._attr_name not in container:
+            return obj.__dict__.get(self._attr_name)
+        param = container[self._attr_name]
+        if param.is_set():
+            return param.value
+        return None
+
+    def __set__(self, obj: object, value: T | None) -> None:
+        """Assign the value to the backing parameter or raw instance storage.
+
+        When no parameter container (or no matching entry) is present, the
+        value is stored directly on the instance ``__dict__``.
+        """
+        container = getattr(obj, self._container_attr, None)
+        if container is None or self._attr_name not in container:
+            # UnknownProcedure path: fall back to plain attribute storage.
+            obj.__dict__[self._attr_name] = value
+            return
+        param = container[self._attr_name]
+        if value is None:
+            param._value = None
+        else:
+            param.value = value
+
+
+def _normalize_group_by(
+    group_by: str | list[str] | tuple[str, ...] | dict[str, object] | None,
+    group_condition: object = True,
+) -> dict[str, object]:
+    """Convert the ``group_by``/``group_condition`` arguments into a ``{name: condition}`` dict."""
+    if group_by is None:
+        return {}
+    if isinstance(group_by, dict):
+        return group_by
+    if isinstance(group_by, str):
+        return {group_by: group_condition}
+    if isinstance(group_by, (list, tuple)) and all(isinstance(e, str) for e in group_by):
+        if isinstance(group_condition, (list, tuple)):
+            return {g: c for g, c in zip(group_by, group_condition)}
+        return {g: group_condition for g in group_by}
+    raise TypeError("The provided group_by argument is not valid, should be either a "
+                    "string, a list of strings, or a dict with {string: condition} pairs.")
+
+
+class Parameter(_InstanceValueDescriptor[T]):
     """ Encapsulates the information for an experiment parameter
     with information about the name, and units if supplied.
-1
+
     :var value: The value of the parameter
 
     :param name: The parameter name
@@ -52,64 +130,59 @@ class Parameter(Generic[T]):
         this argument is ignored.
     :description: A string providing a human-friendly description for the
         parameter.
-    """
-    _value: Union[T, None]
+    :param group_name: Name of the :class:`ParameterGroup` this parameter belongs to; set
+        automatically when the parameter is added to a group.
 
-    def __init__(self,
-                 name: str,
-                 default: Union[T, None] = None,
-                 units: Union[str, None] = None,
-                 ui_class: Union[QtWidgets.QWidget, None] = None,
-                 group_name: Union[str, None] = None,
-                 group_by: Union[GroupByType, None] = None,
-                 group_condition: GroupConditionType = bool(True),
-                 description: Union[str, None] = None):
-        self.name = name
+    The descriptor's ``__set__`` eagerly calls :meth:`convert` exactly once
+    per assignment (at assignment time) via the ``value`` setter. ``None`` is
+    reserved as the "unset" sentinel and bypasses ``convert``, so
+    :meth:`convert` is never called with ``None``. :meth:`convert` does not
+    need to be idempotent.
+    """
+
+    def __init__(
+        self,
+        name: str,
+        default: T | None = None,
+        ui_class: type | None = None,
+        group_by: str | list[str] | tuple[str, ...] | dict[str, object] | None = None,
+        group_condition: object = True,
+        description: str | None = None,
+        group_name: str | None = None,
+    ):
+        self.name: str = name
         separator = ": "
         if separator in name:
             raise ValueError(f"The provided name argument '{name}' contains the "
                              f"separator '{separator}'.")
 
-        self._value = None
+        self._value: T | None = None
         if default is not None:
             self.value = default
-        self.default = default
-        self.units = units
-        self.ui_class = ui_class
-        self.group_name = group_name
-        self._help_fields = [('units are', 'units'), 'default']
+        self.default: T | None = default
+        self.ui_class: type | None = ui_class
+        self.group_name: str | None = group_name
+        self._help_fields: list[tuple[str, str] | str] = [('units are', 'units'), 'default']
 
-        self.group_by = {}
-        if isinstance(group_by, dict):
-            self.group_by = group_by
-        elif isinstance(group_by, str):
-            self.group_by = {group_by: group_condition}
-        elif isinstance(group_by, (list, tuple)) and all(isinstance(e, str) for e in group_by):
-            if isinstance(group_condition, (list, tuple)):
-                self.group_by = {g: c for g, c in zip(group_by, group_condition)}
-            else:
-                self.group_by = {g: group_condition for g in group_by}
-        elif group_by is not None:
-            raise TypeError("The provided group_by argument is not valid, should be either a "
-                            "string, a list of strings, or a dict with {string: condition} pairs.")
+        self.group_by: dict[str, object] = _normalize_group_by(group_by, group_condition)
 
         if description is not None and not isinstance(description, str):
             raise TypeError("The provided description argument is not a string.")
-        self.description = description
-    
+        self.description: str | None = description
+
     @property
-    def value(self) -> Union[T, None]:
+    def value(self) -> T:
         if self.is_set():
-            return self._value
+            return self._value  # type: ignore[reportReturnType]
         else:
             raise ValueError("Parameter value is not set")
 
     @value.setter
-    def value(self, value: Any) -> None:
+    def value(self, value: T) -> None:
         self._value = self.convert(value)
 
     @property
-    def cli_args(self) -> tuple[str,str,str]:
+    def cli_args(self) -> tuple[T | None, list[tuple[str, str] | str], Callable[[Any], T]]:
         """ helper for command line interface parsing of parameters
 
         This property returns a list of data to help formatting a command line
@@ -127,7 +200,7 @@ class Parameter(Generic[T]):
         """
         return self._value is not None
 
-    def convert(self, value: Any) -> Union[T, None]:
+    def convert(self, value: T) -> T:
         """ Convert user input to python data format
 
         Subclasses are expected to customize this method.
@@ -140,7 +213,7 @@ class Parameter(Generic[T]):
 
         return value
 
-    def _cli_help_fields(self):
+    def _cli_help_fields(self) -> str:
         message = f"{self.name}:\n"
         if (description := self.description) is not None:
             if not description.endswith("."):
@@ -159,13 +232,13 @@ class Parameter(Generic[T]):
                 message += f"\n{prefix} {value}."
 
         return message
-    
+
     def __str__(self) -> str:
         return str(self._value) if self.is_set() else ''
 
     def __repr__(self) -> str:
-        return "<{}(name={},value={},default={})>".format(
-            self.__class__.__name__, self.name, self._value, self.default)
+        return (f"<{self.__class__.__name__}(name={self.name},value={self._value},"
+                f"default={self.default})>")
 
 
 class IntegerParameter(Parameter[int]):
@@ -182,38 +255,36 @@ class IntegerParameter(Parameter[int]):
     :param ui_class: A Qt class to use for the UI of this parameter
     :param step: int step size for parameter's UI spinbox. If None, spinbox will have step disabled
     """
-    def __init__(self,
-                 name: str,
-                 default: Union[int, None] = None,
-                 units: Union[str, None] = None,
-                 minimum: int = int(-1e9),
-                 maximum: int = int(1e9),
-                 step: Union[int, None] = None,
-                 ui_class: Union[QtWidgets.QWidget, None] = None,
-                 group_name: Union[str, None] = None,
-                 group_by: Union[GroupByType, None] = None,
-                 group_condition: GroupConditionType = bool(True),
-                 description: Union[str, None] = None):
-        self.units = units
-        self.minimum = int(minimum)
-        self.maximum = int(maximum)
-        self.step = int(step) if step else None
-        super().__init__(name, default, units, ui_class, group_name, group_by, group_condition, description)
+
+    def __init__(
+        self,
+        name: str,
+        units: str | None = None,
+        minimum: int = -(10**9),
+        maximum: int = 10**9,
+        step: int | None = None,
+        **kwargs,
+    ):
+        self.units: str | None = units
+        self.minimum: int = int(minimum)
+        self.maximum: int = int(maximum)
+        super().__init__(name, **kwargs)
+        self.step: int | None = int(step) if step else None
         self._help_fields.append('minimum')
         self._help_fields.append('maximum')
 
-    def convert(self, value):
+    def convert(self, value: float | bool | str) -> int:
         if isinstance(value, str):
             value, _, units = value.strip().partition(" ")
             if units != "" and units != self.units:
-                raise ValueError("Units included in string (%s) do not match"
-                                 "the units of the IntegerParameter (%s)" % (units, self.units))
+                raise ValueError(f"Units included in string ({units}) do not match "
+                                 f"the units of the IntegerParameter ({self.units})")
 
         try:
             value = int(value)
         except ValueError:
             raise ValueError("IntegerParameter given non-integer value of "
-                             "type '%s'" % type(value))
+                             f"type '{type(value)}'")
         if value < self.minimum:
             raise ValueError("IntegerParameter value is below the minimum")
         elif value > self.maximum:
@@ -221,20 +292,23 @@ class IntegerParameter(Parameter[int]):
 
         return value
 
-    def __str__(self):
+    def __index__(self) -> int:
+        return int(self.value)
+
+    def __str__(self) -> str:
         if not self.is_set():
             return ''
-        result = "%d" % self._value
+        result = f"{self._value:d}"
         if self.units:
-            result += " %s" % self.units
+            result += f" {self.units}"
         return result
 
-    def __repr__(self):
-        return "<{}(name={},value={},units={},default={})>".format(
-            self.__class__.__name__, self.name, self._value, self.units, self.default)
+    def __repr__(self) -> str:
+        return (f"<{self.__class__.__name__}(name={self.name},value={self._value},"
+                f"units={self.units},default={self.default})>")
 
 
-class BooleanParameter(Parameter[Union[bool,np.bool]]):
+class BooleanParameter(Parameter[bool | np.bool_]):
     """ :class:`.Parameter` sub-class that uses the boolean type to
     store the value.
 
@@ -245,23 +319,23 @@ class BooleanParameter(Parameter[Union[bool,np.bool]]):
     :param ui_class: A Qt class to use for the UI of this parameter
     """
 
-    def convert(self, value):
+    def convert(self, value: bool | float | str | np.bool_) -> bool:
         if isinstance(value, str):
             if value.lower() == "true":
                 value = True
             elif value.lower() == "false":
                 value = False
             else:
-                raise ValueError("BooleanParameter given string value of '%s'" % value)
+                raise ValueError(f"BooleanParameter given string value of '{value}'")
         elif isinstance(value, (int, float)) and value in [0, 1]:
             value = bool(value)
         elif isinstance(value, bool):
-            value = value
-        elif isinstance(value, np.bool):
-            value = value
+            pass  # already bool
+        elif isinstance(value, np.bool_):
+            value = bool(value)
         else:
             raise ValueError("BooleanParameter given non-boolean value of "
-                             "type '%s'" % type(value))
+                             f"type '{type(value)}'")
         return value
 
 
@@ -279,39 +353,51 @@ class FloatParameter(Parameter[float]):
     :param default: The default floating point value
     :param ui_class: A Qt class to use for the UI of this parameter
     :param step: step size for parameter's UI spinbox. If None, spinbox will have step disabled
+    :param step_type: type of stepping used by the UI spinbox arrows, either ``"linear"``
+        (default) or ``"log"``. For ``"linear"``, each click adds or subtracts ``step``.
+        For ``"log"``, each click multiplies or divides the current value by ``step``.
     """
-    def __init__(self,
-                 name: str,
-                 default: Union[float, None] = None,
-                 units: Union[str, None] = None,
-                 minimum: float = -1e9,
-                 maximum: float = 1e9,
-                 decimals: int = 15,
-                 step: Union[int, None] = None,
-                 ui_class: Union[QtWidgets.QWidget, None] = None,
-                 group_name: Union[str, None] = None,
-                 group_by: Union[GroupByType, None] = None,
-                 group_condition: GroupConditionType = bool(True),
-                 description: Union[str, None] = None):
+
+    def __init__(
+        self,
+        name: str,
+        units: str | None = None,
+        minimum: float = -1e30,
+        maximum: float = 1e30,
+        decimals: int = 30,
+        step: float | None = None,
+        step_type: Literal["linear", "log"] = "linear",
+        **kwargs,
+    ):
+        if step_type not in ("linear", "log"):
+            raise ValueError(
+                f"FloatParameter step_type must be 'linear' or 'log', not '{step_type}'"
+            )
+        if step_type == "log" and step is not None and step <= 1:
+            raise ValueError(
+                f"FloatParameter step must be larger than 1 when step_type is 'log', not {step}"
+            )
+        self.units = units
         self.minimum = minimum
         self.maximum = maximum
+        super().__init__(name, **kwargs)
         self.decimals = decimals
         self.step = step
-        super().__init__(name, default, units, ui_class, group_name, group_by, group_condition, description)
+        self.step_type = step_type
         self._help_fields.append(('decimals are', 'decimals'))
-        
-    def convert(self, value):
+
+    def convert(self, value: float | bool | str) -> float:
         if isinstance(value, str):
             value, _, units = value.strip().partition(" ")
             if units != "" and units != self.units:
-                raise ValueError("Units included in string (%s) do not match"
-                                 "the units of the FloatParameter (%s)" % (units, self.units))
+                raise ValueError(f"Units included in string ({units}) do not match "
+                                 f"the units of the FloatParameter ({self.units})")
 
         try:
             value = float(value)
         except ValueError:
             raise ValueError("FloatParameter given non-float value of "
-                             "type '%s'" % type(value))
+                             f"type '{type(value)}'")
         if value < self.minimum:
             raise ValueError("FloatParameter value is below the minimum")
         elif value > self.maximum:
@@ -319,17 +405,20 @@ class FloatParameter(Parameter[float]):
 
         return value
 
-    def __str__(self):
+    def __float__(self) -> float:
+        return float(self.value)
+
+    def __str__(self) -> str:
         if not self.is_set():
             return ''
-        result = "%g" % self._value
+        result = f"{self._value:g}"
         if self.units:
-            result += " %s" % self.units
+            result += f" {self.units}"
         return result
 
-    def __repr__(self):
-        return "<{}(name={},value={},units={},default={})>".format(
-            self.__class__.__name__, self.name, self._value, self.units, self.default)
+    def __repr__(self) -> str:
+        return (f"<{self.__class__.__name__}(name={self.name},value={self._value},"
+                f"units={self.units},default={self.default})>")
 
 
 class VectorParameter(Parameter[list[float]]):
@@ -344,22 +433,14 @@ class VectorParameter(Parameter[list[float]]):
     :param default: The default value
     :param ui_class: A Qt class to use for the UI of this parameter
     """
-    def __init__(self,
-                 name: str,
-                 default: Union[list[float], None] = None,
-                 units: Union[str, None] = None,
-                 length: int = 3,
-                 ui_class: Union[QtWidgets.QWidget, None] = None,
-                 group_name: Union[str, None] = None,
-                 group_by: Union[GroupByType, None] = None,
-                 group_condition: GroupConditionType = bool(True),
-                 description: Union[str, None] = None):
-        self._length = length
-        self.units = units
-        super().__init__(name, default, units, ui_class, group_name, group_by, group_condition, description)
-        self._help_fields.append(('length is', '_length'))
-        
-    def convert(self, value):
+
+    def __init__(self, name: str, length: int = 3, units: str | None = None, **kwargs):
+        self._length: int = length
+        self.units: str | None = units
+        super().__init__(name, **kwargs)
+        self._help_fields.append(("length is", "_length"))
+
+    def convert(self, value: list[float] | tuple[float, ...] | np.ndarray | str) -> list[float]:
         if isinstance(value, str):
             # strip units if included
             if self.units is not None and value.endswith(" " + self.units):
@@ -374,37 +455,37 @@ class VectorParameter(Parameter[list[float]]):
         elif isinstance(value, (list, tuple, np.ndarray)):
             raw_list = value
         else:
-            raise ValueError("VectorParameter given undesired value of "
-                             "type '%s'" % type(value))
+            raise TypeError("VectorParameter given undesired value of "
+                            f"type '{type(value)}'")
         if len(raw_list) != self._length:
             raise ValueError("VectorParameter given value of length "
-                             "%d instead of %d" % (len(raw_list), self._length))
+                             f"{len(raw_list)} instead of {self._length}")
         try:
             value = [float(ve) for ve in raw_list]
 
         except ValueError:
-            raise ValueError("VectorParameter given input '%s' that could "
-                             "not be converted to floats." % str(value))
+            raise ValueError(f"VectorParameter given input '{value!s}' that could "
+                             "not be converted to floats.")
 
         return value
 
-    def __str__(self):
+    def __str__(self) -> str:
         """If we eliminate spaces within the list __repr__ then the
         csv parser will interpret it as a single value."""
         if not self.is_set():
             return ''
         result = "".join(repr(self.value).split())
         if self.units:
-            result += " %s" % self.units
+            result += f" {self.units}"
         return result
 
-    def __repr__(self):
-        return "<{}(name={},value={},units={},length={})>".format(
-            self.__class__.__name__, self.name, self._value, self.units, self._length)
+    def __repr__(self) -> str:
+        return (f"<{self.__class__.__name__}(name={self.name},value={self._value},"
+                f"units={self.units},length={self._length})>")
 
 
-class ListParameter(Parameter[SupportsStr]):
-    """ :class:`.Parameter` sub-class that stores the value as a list.
+class ListParameter(Parameter[object]):
+    """:class:`.Parameter` sub-class that stores the value as a list.
     String representation of choices must be unique.
 
     :param name: The parameter name
@@ -413,51 +494,50 @@ class ListParameter(Parameter[SupportsStr]):
     :param default: The default value
     :param ui_class: A Qt class to use for the UI of this parameter
     """
-    def __init__(self,
-                 name: str,
-                 choices: Union[list[SupportsStr], None] = None,
-                 default: Union[SupportsStr, None] = None,
-                 units: Union[str, None] = None,
-                 ui_class: Union[QtWidgets.QWidget, None] = None,
-                 group_name: Union[str, None] = None,
-                 group_by: Union[GroupByType, None] = None,
-                 group_condition: GroupConditionType = bool(True),
-                 description: Union[str, None] = None):
+
+    def __init__(
+        self,
+        name: str,
+        choices: list[object] | tuple[object, ...] | None = None,
+        units: str | None = None,
+        **kwargs,
+    ):
+        self.units: str | None = units
         if choices is not None:
             keys = [str(c) for c in choices]
             # check that string representation is unique
             if not len(keys) == len(set(keys)):
                 raise ValueError(
                     "String representation of choices is not unique!")
-            self._choices = {k: c for k, c in zip(keys, choices)}
+            self._choices: dict[str, object] | None = {k: c for k, c in zip(keys, choices)}
         else:
             self._choices = None
-        self.units = units
-        super().__init__(name, default, units, ui_class, group_name, group_by, group_condition, description)
+        super().__init__(name, **kwargs)
         self._help_fields.append(('choices are', 'choices'))
 
-    def convert(self, value: str) -> SupportsStr:
+    def convert(self, value: object) -> object:
         if self._choices is None:
             raise ValueError("ListParameter cannot be set since "
                              "allowed choices are set to None.")
 
         # strip units if included
-        if isinstance(value, str):
-            if self.units is not None and value.endswith(" " + self.units):
-                value = value[:-len(self.units)].strip()
+        if isinstance(value, str) and self.units is not None and value.endswith(" " + self.units):
+            value = value[: -len(self.units)].strip()
 
-        if str(value) in self._choices.keys():
-            return self._choices[str(value)]
+        if str(value) in self._choices:
+            value = self._choices[str(value)]
         else:
             raise ValueError("Invalid choice for parameter. "
-                             "Must be one of %s" % str(self._choices))
+                             f"Must be one of {self._choices!s}")
+
+        return value
 
     @property
-    def choices(self) -> Union[tuple[SupportsStr,...], None]:
+    def choices(self) -> tuple[object, ...] | None:
         """ Returns an immutable iterable of choices, or None if not set. """
-        if self._choices:
-            return tuple(self._choices.values())
-        return None
+        if self._choices is None:
+            return None
+        return tuple(self._choices.values())
 
 
 class PhysicalParameter(VectorParameter):
@@ -472,26 +552,15 @@ class PhysicalParameter(VectorParameter):
     :param default: The default value
     :param ui_class: A Qt class to use for the UI of this parameter
     """
-    # TODO: Rework this class and add an Input that overrides value.
-    def __init__(self,
-                 name: str,
-                 default: Union[list[float], None] = None,
-                 units: Union[str, None] = None,
-                 uncertainty_type: Literal["absolute", "relative", "percentage"] = "absolute",
-                 ui_class: Union[QtWidgets.QWidget, None] = None,
-                 group_name: Union[str, None] = None,
-                 group_by: Union[GroupByType, None] = None,
-                 group_condition: GroupConditionType = bool(True),
-                 description: Union[str, None] = None):
 
+    def __init__(self, name: str, uncertaintyType: str = "absolute", **kwargs):
+        super().__init__(name, length=2, **kwargs)
         self._utype = ListParameter("uncertainty type",
                                     choices=['absolute', 'relative', 'percentage'],
                                     default=None)
-        self._utype.value = uncertainty_type
-        super().__init__(name, default, units, 2, ui_class, group_name,
-                         group_by, group_condition, description)
+        self._utype.value = uncertaintyType
 
-    def convert(self, value):
+    def convert(self, value: list[float] | tuple[float, ...] | np.ndarray | str) -> list[float]:
         if isinstance(value, str):
             # strip units if included
             if self.units is not None and value.endswith(" " + self.units):
@@ -503,197 +572,262 @@ class PhysicalParameter(VectorParameter):
                                  " denoted by square brackets if initializing"
                                  " by string.")
             raw_list = value[1:-1].split(",")
-        elif isinstance(value, (list, tuple)):
+        elif isinstance(value, (list, tuple, np.ndarray)):
             raw_list = value
         else:
-            raise ValueError("VectorParameter given undesired value of "
-                             "type '%s'" % type(value))
+            raise TypeError("VectorParameter given undesired value of "
+                             f"type '{type(value)}'")
         if len(raw_list) != self._length:
             raise ValueError("VectorParameter given value of length "
-                             "%d instead of %d" % (len(raw_list), self._length))
+                             f"{len(raw_list)} instead of {self._length}")
         try:
             value = [float(ve) for ve in raw_list]
         except ValueError:
-            raise ValueError("VectorParameter given input '%s' that could "
-                             "not be converted to floats." % str(value))
+            raise ValueError(f"VectorParameter given input '{value!s}' that could "
+                             "not be converted to floats.")
         # Uncertainty must be non-negative
         value[1] = abs(value[1])
 
         return value
 
     @property
-    def uncertainty_type(self) -> Literal["absolute", "relative", "percentage"]:
-        return self._utype.value
+    def uncertainty_type(self) -> str:
+        return self._utype.value  # type: ignore[reportReturnType]
 
     @uncertainty_type.setter
-    def uncertainty_type(
-            self, uncertaintyType: Literal["absolute", "relative", "percentage"]
-    ) -> None:
+    def uncertainty_type(self, uncertaintyType: str) -> None:
         oldType = self._utype.value
         self._utype.value = uncertaintyType
         newType = self._utype.value
 
         if self.is_set():
+            assert self._value is not None
             # Convert uncertainty value to the new type
             if (oldType, newType) == ('absolute', 'relative'):
-                self.value[1] = abs(self.value[1] / self.value[0])
+                self._value[1] = abs(self._value[1] / self._value[0])
             if (oldType, newType) == ('relative', 'absolute'):
-                self.value[1] = abs(self.value[1] * self.value[0])
+                self._value[1] = abs(self._value[1] * self._value[0])
             if (oldType, newType) == ('relative', 'percentage'):
-                self.value[1] = abs(self.value[1] * 100.0)
+                self._value[1] = abs(self._value[1] * 100.0)
             if (oldType, newType) == ('percentage', 'relative'):
-                self.value[1] = abs(self.value[1] * 0.01)
+                self._value[1] = abs(self._value[1] * 0.01)
             if (oldType, newType) == ('percentage', 'absolute'):
-                self.value[1] = abs(self.value[1] * self.value[0] * 0.01)
+                self._value[1] = abs(self._value[1] * self._value[0] * 0.01)
             if (oldType, newType) == ('absolute', 'percentage'):
-                self.value[1] = abs(self.value[1] * 100.0 / self.value[0])
+                self._value[1] = abs(self._value[1] * 100.0 / self._value[0])
 
-    def __str__(self):
+    def __str__(self) -> str:
         if not self.is_set():
             return ''
-        result = f"{self.value[0]:g} +/- {self.value[1]:g}"
+        assert self._value is not None
+        result = f"{self._value[0]:g} +/- {self._value[1]:g}"
         if self.units:
-            result += " %s" % self.units
+            result += f" {self.units}"
         if self._utype.value is not None:
-            result += " (%s)" % self._utype.value
+            result += f" ({self._utype.value})"
         return result
 
-    def __repr__(self):
-        return "<{}(name={},value={},units={},uncertaintyType={})>".format(
-            self.__class__.__name__, self.name, self._value, self.units, self._utype.value)
+    def __repr__(self) -> str:
+        return (f"<{self.__class__.__name__}(name={self.name},value={self._value},"
+                f"units={self.units},uncertaintyType={self._utype.value})>")
 
-class ParameterGroup:
 
-    def __init__(self,
-                 name: str,
-                 group_by: Union[GroupByType, None] = {},
-                 **parameters: Parameter) -> None:
-        self.name = name
-        self.group_by = group_by
-        self.parameters = parameters
-        self.param_names = list(self.parameters.keys())
-        for _, parameter in self.parameters.items():
-            assert issubclass(parameter.__class__, Parameter)
+class ParameterGroup(_InstanceValueDescriptor[Any]):
+    """ A named collection of :class:`Parameter` objects that is edited together in the GUI and
+    behaves like a single parameter of a :class:`~pymeasure.experiment.procedure.Procedure`.
+
+    The value of the group is :meth:`serialize` of the values of its parameters (a list by
+    default), and assigning a value calls :meth:`deserialize`. Override both in subclasses.
+
+    :param name: The name of the group
+    :param group_by: Defines the Parameter(s) that controls the visibility of the group, in the
+        same way as for :class:`Parameter`.
+    :param parameters: The parameters of the group as keyword arguments; their
+        ``group_name`` is set to the name of the group.
+    """
+
+    def __init__(
+        self,
+        name: str,
+        group_by: str | list[str] | tuple[str, ...] | dict[str, object] | None = None,
+        group_condition: object = True,
+        **parameters: Parameter,
+    ) -> None:
+        self.name: str = name
+        self.group_by: dict[str, object] = _normalize_group_by(group_by, group_condition)
+        self.parameters: dict[str, Parameter] = parameters
+        self.param_names: list[str] = list(parameters)
+        for parameter in parameters.values():
+            if not isinstance(parameter, Parameter):
+                raise TypeError(f"'{parameter!r}' in group '{name}' is not a Parameter.")
             parameter.group_name = name
 
-    def is_set(self):
-        params_set = [param.is_set() for _, param in self.parameters.items()]
-        return all(params_set)
-        
+    def is_set(self) -> bool:
+        """ Returns True if all the parameters of the group are set """
+        return all(param.is_set() for param in self.parameters.values())
+
     @property
-    def value(self) -> list:
+    def value(self) -> Any:
         return self.serialize()
 
     @value.setter
-    def value(self, value_list: list):
-        self.deserialize(value_list)
+    def value(self, value: Any) -> None:
+        self.deserialize(value)
 
-    def serialize(self):
-        """Act on the parameter values and specify what the group should return.
-           By default it returns a list of the parameter values.
-           Modify in subclasses.
+    @property
+    def _value(self) -> Any:
+        # The descriptor protocol of the base class reads and clears ``_value``.
+        return self.serialize() if self.is_set() else None
+
+    @_value.setter
+    def _value(self, value: Any) -> None:
+        if value is not None:
+            raise AttributeError("Set the value of a ParameterGroup through 'value'.")
+        for parameter in self.parameters.values():
+            parameter._value = None
+
+    def serialize(self) -> Any:
+        """ Return the value of the group from the values of its parameters.
+
+        By default a list of the parameter values.
         """
-        return [parameter.value for (_, parameter) in self.parameters.items()]
+        return [parameter.value for parameter in self.parameters.values()]
 
-    def deserialize(self, value: Union[list, str]):
+    def deserialize(self, value: Any) -> None:
+        """ Set the values of the parameters from a value of the group.
+
+        Accepts a list of values in the order of the parameters, or the JSON string
+        produced by ``str(group)``.
+        """
         if isinstance(value, str):
-            value = json.loads(value)
-            value = [item for _,item in value.items()]
-        for value, (_, parameter) in zip(value, self.parameters.items()):
-            parameter.value = value
+            value = list(json.loads(value).values())
+        for item, parameter in zip(value, self.parameters.values()):
+            parameter.value = item
 
-    def __str__(self):
+    def __str__(self) -> str:
         if not self.is_set():
-            return " "
-        result = {parameter.name: str(parameter) for (_,parameter) in self.parameters.items()}
-        result = json.dumps(result)
-        return result
-        
+            return ""
+        return json.dumps({parameter.name: str(parameter)
+                           for parameter in self.parameters.values()})
+
+    def __repr__(self) -> str:
+        return f"<{self.__class__.__name__}(name={self.name},parameters={self.param_names})>"
+
+
 class Range1DParameterGroup(ParameterGroup):
+    """ A :class:`ParameterGroup` of start, stop and number of steps whose value is the
+    :func:`numpy.linspace` array between start and stop.
 
-    def __init__(self,
-                 name: str,
-                 group_by: Union[GroupByType, None] = {},
-                 start_kwargs = {},
-                 stop_kwargs = {},
-                 no_step_kwargs = {},
-                 **kwargs) -> None:
-        self.var_name = name.lower().replace(" ", "_")
-        start_kwargs = {**kwargs, **start_kwargs}
-        stop_kwargs = {**kwargs, **stop_kwargs}
-        no_step_kwargs = {**kwargs, **no_step_kwargs}
-        parameters = {
-            f"{self.var_name}_start": FloatParameter("Start", default=0, **start_kwargs),
-            f"{self.var_name}_stop": FloatParameter("Stop", default=1, **stop_kwargs),
-            f"{self.var_name}_no_steps": IntegerParameter(
-                "Number of steps", default=50, **no_step_kwargs)
-        }
-        super().__init__(name, group_by, **parameters)
+    :param name: The name of the group
+    :param group_by: See :class:`ParameterGroup`
+    :param start_kwargs: Keyword arguments for the start :class:`FloatParameter`
+    :param stop_kwargs: Keyword arguments for the stop :class:`FloatParameter`
+    :param no_step_kwargs: Keyword arguments for the number of steps :class:`IntegerParameter`
+    :param kwargs: Keyword arguments for all three parameters (overridden by the specific ones)
+    """
 
-    def serialize(self):
-        start, stop, no_steps = super().serialize()
+    def __init__(
+        self,
+        name: str,
+        group_by: str | list[str] | tuple[str, ...] | dict[str, object] | None = None,
+        start_kwargs: dict[str, Any] | None = None,
+        stop_kwargs: dict[str, Any] | None = None,
+        no_step_kwargs: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> None:
+        self.var_name: str = name.lower().replace(" ", "_")
+        start_kwargs = {"default": 0, **kwargs, **(start_kwargs or {})}
+        stop_kwargs = {"default": 1, **kwargs, **(stop_kwargs or {})}
+        no_step_kwargs = {"default": 50, **kwargs, **(no_step_kwargs or {})}
+        super().__init__(
+            name,
+            group_by,
+            **{
+                f"{self.var_name}_start": FloatParameter("Start", **start_kwargs),
+                f"{self.var_name}_stop": FloatParameter("Stop", **stop_kwargs),
+                f"{self.var_name}_no_steps": IntegerParameter("Number of steps", **no_step_kwargs),
+            },
+        )
+
+    def serialize(self) -> np.ndarray:
+        start, stop, no_steps = (p.value for p in self.parameters.values())
         return np.linspace(start, stop, no_steps)
 
-    def deserialize(self, value: Union[list, str]):
+    def deserialize(self, value: Any) -> None:
         if isinstance(value, str):
             super().deserialize(value)
         else:
-            self.parameters[f"{self.var_name}_start"].value = value[0]
-            self.parameters[f"{self.var_name}_stop"].value = value[-1]
-            self.parameters[f"{self.var_name}_no_steps"].value = len(value)
+            start, stop, no_steps = self.parameters.values()
+            start.value = value[0]
+            stop.value = value[-1]
+            no_steps.value = len(value)
+
 
 class Range2DParameterGroup(ParameterGroup):
+    """ A :class:`ParameterGroup` of start, stop and number of steps for x and y whose value is
+    the array of ``(x, y)`` points of the grid, shape ``(n_x * n_y, 2)``.
 
-    def __init__(self,
-                 name: str,
-                 group_by: Union[GroupByType, None] = {},
-                 start_kwargs_x = {},
-                 start_kwargs_y = {},
-                 stop_kwargs_x = {},
-                 stop_kwargs_y = {},
-                 no_step_kwargs_x = {},
-                 no_step_kwargs_y = {},
-                 **kwargs
-                 ) -> None:
-        self.var_name = name.lower().replace(" ", "_")
-        start_kwargs_x = {**kwargs, **start_kwargs_x}
-        stop_kwargs_x = {**kwargs, **stop_kwargs_x}
-        no_step_kwargs_x = {**kwargs, **no_step_kwargs_x}
-        start_kwargs_y = {**kwargs, **start_kwargs_y}
-        stop_kwargs_y = {**kwargs, **stop_kwargs_y}
-        no_step_kwargs_y = {**kwargs, **no_step_kwargs_y}
-        parameters = {
-            f"{self.var_name}_start_x": FloatParameter("Start x",default=0., **start_kwargs_x),
-            f"{self.var_name}_stop_x": FloatParameter("Stop x",default=1., **stop_kwargs_x),
-            f"{self.var_name}_no_steps_x": IntegerParameter("Number of steps x",default=50, **no_step_kwargs_x),
-            f"{self.var_name}_start_y": FloatParameter("Start y",default=0., **start_kwargs_y),
-            f"{self.var_name}_stop_y": FloatParameter("Stop y",default=1., **stop_kwargs_y),
-            f"{self.var_name}_no_steps_y": IntegerParameter("Number of steps y",default=50, **no_step_kwargs_y)
-        }
-        super().__init__(name, group_by, **parameters)
+    :param name: The name of the group
+    :param group_by: See :class:`ParameterGroup`
+    :param start_kwargs_x: Keyword arguments for the start of x (likewise ``stop_kwargs_x``,
+        ``no_step_kwargs_x`` and the ``_y`` versions)
+    :param kwargs: Keyword arguments for all six parameters (overridden by the specific ones)
+    """
 
-    def serialize(self):
-        start_x, stop_x, no_steps_x, start_y, stop_y, no_steps_y = super().serialize()
-        x_range = np.linspace(start_x, stop_x, no_steps_x)
-        y_range = np.linspace(start_y, stop_y, no_steps_y)
-        x_range, y_range = np.meshgrid(x_range, y_range)
+    def __init__(
+        self,
+        name: str,
+        group_by: str | list[str] | tuple[str, ...] | dict[str, object] | None = None,
+        start_kwargs_x: dict[str, Any] | None = None,
+        start_kwargs_y: dict[str, Any] | None = None,
+        stop_kwargs_x: dict[str, Any] | None = None,
+        stop_kwargs_y: dict[str, Any] | None = None,
+        no_step_kwargs_x: dict[str, Any] | None = None,
+        no_step_kwargs_y: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> None:
+        self.var_name: str = name.lower().replace(" ", "_")
+        v = self.var_name
+
+        def merged(default: Any, specific: dict[str, Any] | None) -> dict[str, Any]:
+            return {"default": default, **kwargs, **(specific or {})}
+
+        super().__init__(
+            name,
+            group_by,
+            **{
+                f"{v}_start_x": FloatParameter("Start x", **merged(0.0, start_kwargs_x)),
+                f"{v}_stop_x": FloatParameter("Stop x", **merged(1.0, stop_kwargs_x)),
+                f"{v}_no_steps_x": IntegerParameter("Number of steps x",
+                                                    **merged(50, no_step_kwargs_x)),
+                f"{v}_start_y": FloatParameter("Start y", **merged(0.0, start_kwargs_y)),
+                f"{v}_stop_y": FloatParameter("Stop y", **merged(1.0, stop_kwargs_y)),
+                f"{v}_no_steps_y": IntegerParameter("Number of steps y",
+                                                    **merged(50, no_step_kwargs_y)),
+            },
+        )
+
+    def serialize(self) -> np.ndarray:
+        start_x, stop_x, no_steps_x, start_y, stop_y, no_steps_y = (
+            p.value for p in self.parameters.values())
+        x_range, y_range = np.meshgrid(np.linspace(start_x, stop_x, no_steps_x),
+                                       np.linspace(start_y, stop_y, no_steps_y))
         return np.dstack((x_range.flatten(), y_range.flatten()))[0]
 
-    def deserialize(self, value: Union[np.ndarray, str]):
+    def deserialize(self, value: Any) -> None:
         if isinstance(value, str):
             super().deserialize(value)
         else:
-            x_values = np.unique(value[:,0])
-            y_values = np.unique(value[:,1])
-            self.parameters[f"{self.var_name}_start_x"].value = x_values[0]
-            self.parameters[f"{self.var_name}_stop_x"].value = x_values[-1]
-            self.parameters[f"{self.var_name}_no_steps_x"].value = x_values.shape[0]
+            x_values = np.unique(value[:, 0])
+            y_values = np.unique(value[:, 1])
+            start_x, stop_x, no_steps_x, start_y, stop_y, no_steps_y = self.parameters.values()
+            start_x.value, stop_x.value, no_steps_x.value = (
+                x_values[0], x_values[-1], x_values.shape[0])
+            start_y.value, stop_y.value, no_steps_y.value = (
+                y_values[0], y_values[-1], y_values.shape[0])
 
-            self.parameters[f"{self.var_name}_start_y"].value = y_values[0]
-            self.parameters[f"{self.var_name}_stop_y"].value = y_values[-1]
-            self.parameters[f"{self.var_name}_no_steps_y"].value = y_values.shape[0]
-            
-class Measurable:
+
+class Measurable(Generic[T]):
     """ Encapsulates the information for a measurable experiment parameter
     with information about the name, fget function and units if supplied.
     The value property is called when the procedure retrieves a datapoint
@@ -707,34 +841,38 @@ class Measurable:
     :param fget: The parameter fget function (e.g. an instrument parameter)
     :param default: The default value
     """
-    DATA_COLUMNS = []
+    DATA_COLUMNS: list[str] = []
 
-    def __init__(self, name, fget=None, units=None, measure=True, default=None, **kwargs):
-        self.name = name
-        self.units = units
-        self.measure = measure
+    def __init__(
+        self,
+        name: str,
+        fget: Callable[[], T] | None = None,
+        units: str | None = None,
+        measure: bool = True,
+        default: T | None = None,
+        **kwargs,
+    ):
+        self.name: str = name
+        self.units: str | None = units
+        self.measure: bool = measure
+        self._value: T | None = default
+        self.fget: Callable[[], T] | None = fget
         if fget is not None:
-            self.fget = fget
             self._value = fget()
-        else:
-            self._value = default
         Measurable.DATA_COLUMNS.append(name)
 
-    def fget(self):
-        return self._value
-
     @property
-    def value(self):
-        if hasattr(self, 'fget'):
+    def value(self) -> T:
+        if self.fget is not None:
             self._value = self.fget()
-        return self._value
+        return self._value  # type: ignore[reportReturnType]
 
     @value.setter
-    def value(self, value):
+    def value(self, value: T) -> None:
         self._value = value
 
 
-class Metadata(object):
+class Metadata(_InstanceValueDescriptor[T]):
     """ Encapsulates the information for metadata of the experiment with
     information about the name, the fget function and the units, if supplied.
     If no fget function is specified, the value property will return the
@@ -757,42 +895,75 @@ class Metadata(object):
     :param fmt: A string used to format the value upon writing it to a file.
         Default is "%s"
 
+    The descriptor's ``__set__`` eagerly calls :meth:`convert` exactly once
+    per assignment (at assignment time) via the ``value`` setter. ``None`` is
+    reserved as the "unset" sentinel and bypasses ``convert``, so
+    :meth:`convert` is never called with ``None``. :meth:`convert` does not
+    need to be idempotent. ``Metadata.convert`` defaults to the identity
+    function, so ``Metadata`` behaves as before unless a subclass overrides
+    :meth:`convert`.
+
     """
-    def __init__(self, name, fget=None, units=None, default=None, fmt="%s"):
-        self.name = name
-        self.units = units
 
-        self._value = default
-        self.fget = fget
-        self.fmt = fmt
+    _container_attr: str = "_metadata"
 
-        self.evaluated = False
+    def __init__(
+        self,
+        name: str,
+        fget: Callable[[], T] | str | None = None,
+        units: str | None = None,
+        default: T | None = None,
+        fmt: str = "%s",
+    ):
+        self.name: str = name
+        self.units: str | None = units
+        self._value: T | None = default
+        self.fget: Callable[[], T] | str | None = fget
+        self.fmt: str = fmt
+        self.evaluated: bool = False
 
     @property
-    def value(self):
+    def value(self) -> T:
         if self.is_set():
-            return self._value
+            return self._value  # type: ignore[reportReturnType]
         else:
             raise ValueError("Metadata value is not set")
 
-    def is_set(self):
+    @value.setter
+    def value(self, value: T) -> None:
+        self._value = self.convert(value)
+
+    def is_set(self) -> bool:
         """ Returns True if the Parameter value is set
         """
         return self._value is not None
 
-    def evaluate(self, parent=None, new_value=None):
+    def convert(self, value: T) -> T:
+        """ Convert user input to python data format
+
+        Subclasses are expected to customize this method.
+        Default implementation is the identity function
+
+        :param value: value to be converted
+
+        :return: converted value
+        """
+
+        return value
+
+    def evaluate(self, parent: object | None = None, new_value: T | None = None) -> T:
         if new_value is not None and self.fget is not None:
             raise ValueError("Metadata with a defined fget method"
                              " cannot be manually assigned a value")
         elif new_value is not None:
-            self._value = new_value
+            self.value = new_value
         elif self.fget is not None:
-            self._value = self.eval_fget(parent)
+            self.value = self.eval_fget(parent)
 
         self.evaluated = True
         return self.value
 
-    def eval_fget(self, parent):
+    def eval_fget(self, parent: object | None) -> T:
         fget = self.fget
         if isinstance(fget, str):
             obj = parent
@@ -801,14 +972,14 @@ class Metadata(object):
             fget = obj
 
         if callable(fget):
-            return fget()
+            return fget()  # type: ignore[reportReturnType]
         else:
-            return fget
+            return fget  # type: ignore[reportReturnType]
 
-    def __str__(self):
+    def __str__(self) -> str:
         result = self.fmt % self.value
 
         if self.units is not None:
-            result += " %s" % self.units
+            result += f" {self.units}"
 
         return result
