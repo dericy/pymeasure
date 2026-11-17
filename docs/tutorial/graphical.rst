@@ -263,6 +263,45 @@ The default values can be easily set after the :class:`~pymeasure.display.window
 The presence of the widget is controlled by the boolean argument :code:`enabled_file_input` of the :class:`~pymeasure.display.windows.managed_window.ManagedWindow` init.
 Note that when this is set to :code:`False`, the default :meth:`~pymeasure.display.windows.managed_window.ManagedWindowBase.queue` method of the :class:`~pymeasure.display.windows.managed_window.ManagedWindow` class will no longer work, and a new, custom, method needs to be implemented; a basic implementation is shown in the documentation of the :meth:`~pymeasure.display.windows.managed_window.ManagedWindowBase.queue` method.
 
+Saving to an icechunk store
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Next to the file, the data of an experiment can be saved to an `icechunk <https://icechunk.io>`_ store, a transactional storage for Zarr data in which every save is a commit with a message and metadata on a branch.
+This needs the optional dependencies (Python 3.11 or newer): :code:`pip install pymeasure[icechunk]`.
+The :class:`~pymeasure.display.widgets.icechunk_widget.IcechunkInputWidget` offers text fields in the style of the filename and directory input, and saves every experiment that finishes:
+
+.. code-block:: python
+
+    class MainWindow(ManagedWindow):
+
+        def __init__(self):
+            super().__init__(
+                procedure_class=TestProcedure,
+                inputs=['iterations', 'delay', 'seed'],
+                x_axis='Iteration',
+                y_axis='Random Number',
+            )
+            self.icechunk_input = IcechunkInputWidget(TestProcedure, parent=self)
+            dock = QtWidgets.QDockWidget('Icechunk store')
+            dock.setWidget(self.icechunk_input)
+            dock.setFeatures(QtWidgets.QDockWidget.DockWidgetFeature.NoDockWidgetFeatures)
+            self.addDockWidget(QtCore.Qt.DockWidgetArea.LeftDockWidgetArea, dock)
+            self.manager.finished.connect(self.icechunk_input.experiment_finished)
+
+            self.icechunk_input.store = r'C:/Path/to/store'    # Sets default store directory
+            self.icechunk_input.group = 'sample_{Delay Time}'  # Sets default group
+
+The fields are the directory of the store (created if it does not exist), the branch (created from :code:`main` if it does not exist), the group in the store, the commit message, and extra commit metadata as :code:`key=value` entries separated by :code:`;`.
+The group, the commit message and the metadata values accept the same placeholders as the filename, and have the same auto-completion.
+As for the filename, an index number (:code:`_#`) is added to the group so that an earlier measurement is never overwritten.
+
+Each save writes one group, with the columns of the data as variables along the dimension :code:`record` (the unit in a column header such as :code:`Voltage (V)` becomes the attribute :code:`units`), and with the procedure, its parameters and metadata as attributes.
+It is read back with :func:`~pymeasure.experiment.icechunk_store.load_group` or directly with :code:`xarray.open_zarr`.
+The saving is done in the GUI thread, so a store on a slow network location blocks the window while it is written.
+Errors do not stop the experiment: they are logged and shown below the fields.
+Only experiments that finish are saved; connect :code:`self.manager.abort_returned` or :code:`self.manager.failed` to the same slot to keep the data of aborted or failed experiments as well.
+Icechunk's local-filesystem storage is not safe for several processes that commit at the same time; use an object store for that (pass its :code:`icechunk.Storage` to :func:`~pymeasure.experiment.icechunk_store.save_results_to_icechunk`, or give the widget a :code:`storage_factory`).
+
 Customising the plot options
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 

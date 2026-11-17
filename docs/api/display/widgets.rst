@@ -22,6 +22,10 @@ Widget classes
     :members:
     :show-inheritance:
 
+.. automodule:: pymeasure.display.widgets.icechunk_widget
+    :members:
+    :show-inheritance:
+
 .. automodule:: pymeasure.display.widgets.image_frame
     :members:
     :show-inheritance:

@@ -45,11 +45,19 @@ tcp = [
     "pyzmq>=16.0.2",
     "cloudpickle>=0.3.1",
 ]
+icechunk = [
+    "icechunk>=1.1; python_version >= '3.11'",
+    "xarray>=2026.9; python_version >= '3.11'",
+    "zarr>=3.1; python_version >= '3.11'",
+]
 tests = [
     "pytest>=3.3.0",
     "pytest-cov>=4.1.0",
     "pytest-qt>=2.4.0",
     "pyvisa-sim>=0.4.0",
+    "icechunk>=1.1; python_version >= '3.11'",
+    "xarray>=2026.9; python_version >= '3.11'",
+    "zarr>=3.1; python_version >= '3.11'",
 ]
 # install pyqt or pyside manually as desired
 docs = [

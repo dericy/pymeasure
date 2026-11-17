@@ -13,3 +13,4 @@ This section contains specific documentation on the classes and methods of the p
    parameters
    workers
    results
+   icechunk_store

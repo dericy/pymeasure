@@ -38,6 +38,7 @@ Instruments
 
 GUI
 ---
+- Add :class:`~pymeasure.display.widgets.icechunk_widget.IcechunkInputWidget` and :func:`~pymeasure.experiment.icechunk_store.save_results_to_icechunk` to save experiment data to an `icechunk <https://icechunk.io>`_ store with a commit message and metadata. Install the optional dependencies with :code:`pip install pymeasure[icechunk]` (Python 3.11 or newer).
 - Tear down plot frames and their crosshairs safely when a plot is closed or deleted, which fixes intermittent crashes during window and test teardown.
 
 Version 0.16.0 (2026-05-20)
