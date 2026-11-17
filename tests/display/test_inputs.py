@@ -56,18 +56,18 @@ class TestBooleanInput:
         qtbot.addWidget(bool_input)
 
         # test
-        assert bool_input.text() == bool_param.name
-        assert bool_input.value() == check_value
+        assert bool_input.widget.text() == bool_param.name
+        assert bool_input.get_value() == check_value
 
-    def test_setValue_should_update_value(self, qtbot, default_value):
+    def test_set_value_should_update_value(self, qtbot, default_value):
 
         # set up BooleanInput
         bool_param = BooleanParameter('potato', default=default_value)
         bool_input = BooleanInput(bool_param)
         qtbot.addWidget(bool_input)
 
-        bool_input.setValue(not default_value)
-        assert bool_input.value() == (not default_value)
+        bool_input.set_value(not default_value)
+        assert bool_input.get_value() == (not default_value)
 
     def test_leftclick_should_update_parameter(self, qtbot, default_value):
         # set up BooleanInput
@@ -86,9 +86,9 @@ class TestBooleanInput:
 
             # TODO: fix: fails to toggle on Windows
             # qtbot.mouseClick(bool_input, QtCore.Qt.LeftButton)
-            bool_input.setValue(not default_value)
+            bool_input.set_value(not default_value)
 
-            assert bool_input.value() == (not default_value)
+            assert bool_input.get_value() == (not default_value)
             _ = bool_input.parameter  # lazy update
             p.assert_called_once_with(not default_value)
 
@@ -118,10 +118,10 @@ class TestListInput:
         list_input = ListInput(list_param)
         qtbot.addWidget(list_input)
 
-        assert list_input.isEditable() is False
-        assert list_input.value() == check_value
+        assert list_input.widget.isEditable() is False
+        assert list_input.get_value() == check_value
 
-    def test_setValue_should_update_value(self, qtbot):
+    def test_set_value_should_update_value(self, qtbot):
         # Test write-read loop: verify value -> index -> value conversion
         choices = [123, 'abc', 0]
         list_param = ListParameter('potato', choices=choices, default=123)
@@ -129,11 +129,11 @@ class TestListInput:
         qtbot.addWidget(list_input)
 
         for choice in choices:
-            list_input.setValue(choice)
-            assert list_input.currentText() == str(choice)
-            assert list_input.value() == choice
+            list_input.set_value(choice)
+            assert list_input.widget.currentText() == str(choice)
+            assert list_input.get_value() == choice
 
-    def test_setValue_should_update_parameter(self, qtbot):
+    def test_set_value_should_update_parameter(self, qtbot):
         choices = [123, 'abc', 0]
         list_param = ListParameter('potato', choices=choices, default=123)
         list_input = ListInput(list_param)
@@ -143,7 +143,7 @@ class TestListInput:
                         new_callable=mock.PropertyMock,
                         return_value=123) as p:
             for choice in choices:
-                list_input.setValue(choice)
+                list_input.set_value(choice)
                 _ = list_input.parameter  # lazy update
             p.assert_has_calls((mock.call(123), mock.call('abc'), mock.call(0)))
 
@@ -152,14 +152,14 @@ class TestListInput:
         list_input = ListInput(list_param)
         qtbot.addWidget(list_input)
 
-        assert list_input.currentText() == '123 m'
+        assert list_input.widget.currentText() == '123 m'
 
     def test_set_invalid_value_should_raise(self, qtbot):
         list_param = ListParameter('potato', choices=[123, 456], default=123, units='m')
         list_input = ListInput(list_param)
         qtbot.addWidget(list_input)
         with pytest.raises(ValueError):
-            list_input.setValue(789)
+            list_input.set_value(789)
 
 
 class TestScientificInput:
@@ -190,22 +190,22 @@ class TestScientificInput:
         sci_input = ScientificInput(float_param)
         qtbot.addWidget(sci_input)
 
-        assert sci_input.minimum() == min_
-        assert sci_input.maximum() == max_
-        assert sci_input.value() == check_value
-        assert sci_input.suffix() == ' m'
+        assert sci_input.widget.minimum() == min_
+        assert sci_input.widget.maximum() == max_
+        assert sci_input.widget.value() == check_value
+        assert sci_input.widget.suffix() == ' m'
 
-    def test_setValue_within_range_should_set(self, qtbot):
+    def test_set_value_within_range_should_set(self, qtbot):
         float_param = FloatParameter('potato',
                                      minimum=-10, maximum=10, default=0)
         sci_input = ScientificInput(float_param)
         qtbot.addWidget(sci_input)
 
         # test
-        sci_input.setValue(5)
-        assert sci_input.value() == 5
+        sci_input.set_value(5)
+        assert sci_input.get_value() == 5
 
-    def test_setValue_within_range_should_set_regression_118(self, qtbot):
+    def test_set_value_within_range_should_set_regression_118(self, qtbot):
         float_param = FloatParameter('potato',
                                      minimum=-1000, maximum=1000, default=0)
         sci_input = ScientificInput(float_param)
@@ -213,26 +213,26 @@ class TestScientificInput:
 
         # test - validate min/max beyond QDoubleSpinBox defaults
         # QDoubleSpinBox defaults are 0 to 99.9 - so test value >= 100
-        sci_input.setValue(999)
-        assert sci_input.value() == 999
+        sci_input.set_value(999)
+        assert sci_input.get_value() == 999
 
-        sci_input.setValue(-999)
-        assert sci_input.value() == -999
+        sci_input.set_value(-999)
+        assert sci_input.get_value() == -999
 
-    def test_setValue_out_of_range_should_constrain(self, qtbot):
+    def test_set_value_out_of_range_should_constrain(self, qtbot):
         float_param = FloatParameter('potato',
                                      minimum=-1000, maximum=1000, default=0)
         sci_input = ScientificInput(float_param)
         qtbot.addWidget(sci_input)
 
         # test
-        sci_input.setValue(1024)
-        assert sci_input.value() == 1000
+        sci_input.set_value(1024)
+        assert sci_input.get_value() == 1000
 
-        sci_input.setValue(-1024)
-        assert sci_input.value() == -1000
+        sci_input.set_value(-1024)
+        assert sci_input.get_value() == -1000
 
-    def test_setValue_should_update_param(self, qtbot):
+    def test_set_value_should_update_param(self, qtbot):
         float_param = FloatParameter('potato',
                                      minimum=-1000, maximum=1000, default=10.0)
         sci_input = ScientificInput(float_param)
@@ -242,7 +242,7 @@ class TestScientificInput:
                         new_callable=mock.PropertyMock,
                         return_value=10.0) as p:
             # test
-            sci_input.setValue(5.0)
+            sci_input.set_value(5.0)
             _ = sci_input.parameter  # lazy update
             p.assert_called_once_with(5.0)
 
@@ -251,10 +251,10 @@ class TestScientificInput:
         sci_input = ScientificInput(float_param)
         qtbot.addWidget(sci_input)
 
-        sci_input.stepBy(1)
-        assert sci_input.value() == 12.0
-        sci_input.stepBy(-1)
-        assert sci_input.value() == 10.0
+        sci_input.widget.stepBy(1)
+        assert sci_input.get_value() == 12.0
+        sci_input.widget.stepBy(-1)
+        assert sci_input.get_value() == 10.0
 
     def test_log_stepBy(self, qtbot):
         float_param = FloatParameter(
@@ -263,21 +263,21 @@ class TestScientificInput:
         sci_input = ScientificInput(float_param)
         qtbot.addWidget(sci_input)
 
-        sci_input.stepBy(1)
-        assert sci_input.value() == 100.0
-        sci_input.stepBy(-1)
-        assert sci_input.value() == 10.0
+        sci_input.widget.stepBy(1)
+        assert sci_input.get_value() == 100.0
+        sci_input.widget.stepBy(-1)
+        assert sci_input.get_value() == 10.0
         # Multiple steps at once
-        sci_input.stepBy(2)
-        assert sci_input.value() == 1000.0
+        sci_input.widget.stepBy(2)
+        assert sci_input.get_value() == 1000.0
 
     def test_log_stepBy_for_negative_value(self, qtbot):
         float_param = FloatParameter("potato", default=-1.0, step=10, step_type="log")
         sci_input = ScientificInput(float_param)
         qtbot.addWidget(sci_input)
 
-        sci_input.stepBy(1)
-        assert sci_input.value() == -0.1
+        sci_input.widget.stepBy(1)
+        assert sci_input.get_value() == -0.1
 
     @pytest.mark.parametrize("locale, decimalSep", [
         [QtCore.QLocale(QtCore.QLocale.English,
@@ -296,13 +296,13 @@ class TestScientificInput:
         sci_input = ScientificInput(float_param)
 
         # Check if the modified locale is set
-        assert sci_input.locale().decimalPoint() == decimalSep
-        assert sci_input.validator.locale().decimalPoint() == decimalSep
+        assert sci_input.widget.locale().decimalPoint() == decimalSep
+        assert sci_input.widget.validator.locale().decimalPoint() == decimalSep
 
         # Check if conversion from double to text works correctly
-        assert sci_input.valueFromText(f"2{decimalSep}6") == 2.6
+        assert sci_input.widget.valueFromText(f"2{decimalSep}6") == 2.6
         # Check if conversion from text to double works correctly
-        assert sci_input.textFromValue(2.6) == f"2{decimalSep}6"
+        assert sci_input.widget.textFromValue(2.6) == f"2{decimalSep}6"
 
         # Reset the locale settings
         QtCore.QLocale.setDefault(QtCore.QLocale.system())
@@ -317,4 +317,4 @@ class TestVectorInput:
         vector_param = VectorInput(vector_param)
         qtbot.addWidget(vector_param)
 
-        assert "[-1.35, 2.0, 360000.0]" == vector_param.value()
+        assert "[-1.35, 2.0, 360000.0]" == vector_param.get_value()

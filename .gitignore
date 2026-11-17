@@ -111,6 +111,9 @@ settings.json
 # Vim
 *.swp
 
+# Pyright
+pyrightconfig.json
+
 # uv lock file
 uv.lock
 

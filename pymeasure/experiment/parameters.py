@@ -24,6 +24,7 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Callable
 from typing import Any, Generic, Literal, TypeVar, overload
 
@@ -89,6 +90,25 @@ class _InstanceValueDescriptor(Generic[T]):
             param.value = value
 
 
+def _normalize_group_by(
+    group_by: str | list[str] | tuple[str, ...] | dict[str, object] | None,
+    group_condition: object = True,
+) -> dict[str, object]:
+    """Convert the ``group_by``/``group_condition`` arguments into a ``{name: condition}`` dict."""
+    if group_by is None:
+        return {}
+    if isinstance(group_by, dict):
+        return group_by
+    if isinstance(group_by, str):
+        return {group_by: group_condition}
+    if isinstance(group_by, (list, tuple)) and all(isinstance(e, str) for e in group_by):
+        if isinstance(group_condition, (list, tuple)):
+            return {g: c for g, c in zip(group_by, group_condition)}
+        return {g: group_condition for g in group_by}
+    raise TypeError("The provided group_by argument is not valid, should be either a "
+                    "string, a list of strings, or a dict with {string: condition} pairs.")
+
+
 class Parameter(_InstanceValueDescriptor[T]):
     """ Encapsulates the information for an experiment parameter
     with information about the name, and units if supplied.
@@ -110,6 +130,8 @@ class Parameter(_InstanceValueDescriptor[T]):
         this argument is ignored.
     :description: A string providing a human-friendly description for the
         parameter.
+    :param group_name: Name of the :class:`ParameterGroup` this parameter belongs to; set
+        automatically when the parameter is added to a group.
 
     The descriptor's ``__set__`` eagerly calls :meth:`convert` exactly once
     per assignment (at assignment time) via the ``value`` setter. ``None`` is
@@ -126,6 +148,7 @@ class Parameter(_InstanceValueDescriptor[T]):
         group_by: str | list[str] | tuple[str, ...] | dict[str, object] | None = None,
         group_condition: object = True,
         description: str | None = None,
+        group_name: str | None = None,
     ):
         self.name: str = name
         separator = ": "
@@ -138,21 +161,10 @@ class Parameter(_InstanceValueDescriptor[T]):
             self.value = default
         self.default: T | None = default
         self.ui_class: type | None = ui_class
+        self.group_name: str | None = group_name
         self._help_fields: list[tuple[str, str] | str] = [('units are', 'units'), 'default']
 
-        self.group_by: dict[str, object] = {}
-        if isinstance(group_by, dict):
-            self.group_by = group_by
-        elif isinstance(group_by, str):
-            self.group_by = {group_by: group_condition}
-        elif isinstance(group_by, (list, tuple)) and all(isinstance(e, str) for e in group_by):
-            if isinstance(group_condition, (list, tuple)):
-                self.group_by = {g: c for g, c in zip(group_by, group_condition)}
-            else:
-                self.group_by = {g: group_condition for g in group_by}
-        elif group_by is not None:
-            raise TypeError("The provided group_by argument is not valid, should be either a "
-                            "string, a list of strings, or a dict with {string: condition} pairs.")
+        self.group_by: dict[str, object] = _normalize_group_by(group_by, group_condition)
 
         if description is not None and not isinstance(description, str):
             raise TypeError("The provided description argument is not a string.")
@@ -618,6 +630,201 @@ class PhysicalParameter(VectorParameter):
     def __repr__(self) -> str:
         return (f"<{self.__class__.__name__}(name={self.name},value={self._value},"
                 f"units={self.units},uncertaintyType={self._utype.value})>")
+
+
+class ParameterGroup(_InstanceValueDescriptor[Any]):
+    """ A named collection of :class:`Parameter` objects that is edited together in the GUI and
+    behaves like a single parameter of a :class:`~pymeasure.experiment.procedure.Procedure`.
+
+    The value of the group is :meth:`serialize` of the values of its parameters (a list by
+    default), and assigning a value calls :meth:`deserialize`. Override both in subclasses.
+
+    :param name: The name of the group
+    :param group_by: Defines the Parameter(s) that controls the visibility of the group, in the
+        same way as for :class:`Parameter`.
+    :param parameters: The parameters of the group as keyword arguments; their
+        ``group_name`` is set to the name of the group.
+    """
+
+    def __init__(
+        self,
+        name: str,
+        group_by: str | list[str] | tuple[str, ...] | dict[str, object] | None = None,
+        group_condition: object = True,
+        **parameters: Parameter,
+    ) -> None:
+        self.name: str = name
+        self.group_by: dict[str, object] = _normalize_group_by(group_by, group_condition)
+        self.parameters: dict[str, Parameter] = parameters
+        self.param_names: list[str] = list(parameters)
+        for parameter in parameters.values():
+            if not isinstance(parameter, Parameter):
+                raise TypeError(f"'{parameter!r}' in group '{name}' is not a Parameter.")
+            parameter.group_name = name
+
+    def is_set(self) -> bool:
+        """ Returns True if all the parameters of the group are set """
+        return all(param.is_set() for param in self.parameters.values())
+
+    @property
+    def value(self) -> Any:
+        return self.serialize()
+
+    @value.setter
+    def value(self, value: Any) -> None:
+        self.deserialize(value)
+
+    @property
+    def _value(self) -> Any:
+        # The descriptor protocol of the base class reads and clears ``_value``.
+        return self.serialize() if self.is_set() else None
+
+    @_value.setter
+    def _value(self, value: Any) -> None:
+        if value is not None:
+            raise AttributeError("Set the value of a ParameterGroup through 'value'.")
+        for parameter in self.parameters.values():
+            parameter._value = None
+
+    def serialize(self) -> Any:
+        """ Return the value of the group from the values of its parameters.
+
+        By default a list of the parameter values.
+        """
+        return [parameter.value for parameter in self.parameters.values()]
+
+    def deserialize(self, value: Any) -> None:
+        """ Set the values of the parameters from a value of the group.
+
+        Accepts a list of values in the order of the parameters, or the JSON string
+        produced by ``str(group)``.
+        """
+        if isinstance(value, str):
+            value = list(json.loads(value).values())
+        for item, parameter in zip(value, self.parameters.values()):
+            parameter.value = item
+
+    def __str__(self) -> str:
+        if not self.is_set():
+            return ""
+        return json.dumps({parameter.name: str(parameter)
+                           for parameter in self.parameters.values()})
+
+    def __repr__(self) -> str:
+        return f"<{self.__class__.__name__}(name={self.name},parameters={self.param_names})>"
+
+
+class Range1DParameterGroup(ParameterGroup):
+    """ A :class:`ParameterGroup` of start, stop and number of steps whose value is the
+    :func:`numpy.linspace` array between start and stop.
+
+    :param name: The name of the group
+    :param group_by: See :class:`ParameterGroup`
+    :param start_kwargs: Keyword arguments for the start :class:`FloatParameter`
+    :param stop_kwargs: Keyword arguments for the stop :class:`FloatParameter`
+    :param no_step_kwargs: Keyword arguments for the number of steps :class:`IntegerParameter`
+    :param kwargs: Keyword arguments for all three parameters (overridden by the specific ones)
+    """
+
+    def __init__(
+        self,
+        name: str,
+        group_by: str | list[str] | tuple[str, ...] | dict[str, object] | None = None,
+        start_kwargs: dict[str, Any] | None = None,
+        stop_kwargs: dict[str, Any] | None = None,
+        no_step_kwargs: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> None:
+        self.var_name: str = name.lower().replace(" ", "_")
+        start_kwargs = {"default": 0, **kwargs, **(start_kwargs or {})}
+        stop_kwargs = {"default": 1, **kwargs, **(stop_kwargs or {})}
+        no_step_kwargs = {"default": 50, **kwargs, **(no_step_kwargs or {})}
+        super().__init__(
+            name,
+            group_by,
+            **{
+                f"{self.var_name}_start": FloatParameter("Start", **start_kwargs),
+                f"{self.var_name}_stop": FloatParameter("Stop", **stop_kwargs),
+                f"{self.var_name}_no_steps": IntegerParameter("Number of steps", **no_step_kwargs),
+            },
+        )
+
+    def serialize(self) -> np.ndarray:
+        start, stop, no_steps = (p.value for p in self.parameters.values())
+        return np.linspace(start, stop, no_steps)
+
+    def deserialize(self, value: Any) -> None:
+        if isinstance(value, str):
+            super().deserialize(value)
+        else:
+            start, stop, no_steps = self.parameters.values()
+            start.value = value[0]
+            stop.value = value[-1]
+            no_steps.value = len(value)
+
+
+class Range2DParameterGroup(ParameterGroup):
+    """ A :class:`ParameterGroup` of start, stop and number of steps for x and y whose value is
+    the array of ``(x, y)`` points of the grid, shape ``(n_x * n_y, 2)``.
+
+    :param name: The name of the group
+    :param group_by: See :class:`ParameterGroup`
+    :param start_kwargs_x: Keyword arguments for the start of x (likewise ``stop_kwargs_x``,
+        ``no_step_kwargs_x`` and the ``_y`` versions)
+    :param kwargs: Keyword arguments for all six parameters (overridden by the specific ones)
+    """
+
+    def __init__(
+        self,
+        name: str,
+        group_by: str | list[str] | tuple[str, ...] | dict[str, object] | None = None,
+        start_kwargs_x: dict[str, Any] | None = None,
+        start_kwargs_y: dict[str, Any] | None = None,
+        stop_kwargs_x: dict[str, Any] | None = None,
+        stop_kwargs_y: dict[str, Any] | None = None,
+        no_step_kwargs_x: dict[str, Any] | None = None,
+        no_step_kwargs_y: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> None:
+        self.var_name: str = name.lower().replace(" ", "_")
+        v = self.var_name
+
+        def merged(default: Any, specific: dict[str, Any] | None) -> dict[str, Any]:
+            return {"default": default, **kwargs, **(specific or {})}
+
+        super().__init__(
+            name,
+            group_by,
+            **{
+                f"{v}_start_x": FloatParameter("Start x", **merged(0.0, start_kwargs_x)),
+                f"{v}_stop_x": FloatParameter("Stop x", **merged(1.0, stop_kwargs_x)),
+                f"{v}_no_steps_x": IntegerParameter("Number of steps x",
+                                                    **merged(50, no_step_kwargs_x)),
+                f"{v}_start_y": FloatParameter("Start y", **merged(0.0, start_kwargs_y)),
+                f"{v}_stop_y": FloatParameter("Stop y", **merged(1.0, stop_kwargs_y)),
+                f"{v}_no_steps_y": IntegerParameter("Number of steps y",
+                                                    **merged(50, no_step_kwargs_y)),
+            },
+        )
+
+    def serialize(self) -> np.ndarray:
+        start_x, stop_x, no_steps_x, start_y, stop_y, no_steps_y = (
+            p.value for p in self.parameters.values())
+        x_range, y_range = np.meshgrid(np.linspace(start_x, stop_x, no_steps_x),
+                                       np.linspace(start_y, stop_y, no_steps_y))
+        return np.dstack((x_range.flatten(), y_range.flatten()))[0]
+
+    def deserialize(self, value: Any) -> None:
+        if isinstance(value, str):
+            super().deserialize(value)
+        else:
+            x_values = np.unique(value[:, 0])
+            y_values = np.unique(value[:, 1])
+            start_x, stop_x, no_steps_x, start_y, stop_y, no_steps_y = self.parameters.values()
+            start_x.value, stop_x.value, no_steps_x.value = (
+                x_values[0], x_values[-1], x_values.shape[0])
+            start_y.value, stop_y.value, no_steps_y.value = (
+                y_values[0], y_values[-1], y_values.shape[0])
 
 
 class Measurable(Generic[T]):

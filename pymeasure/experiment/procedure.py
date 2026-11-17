@@ -36,7 +36,7 @@ from pint import UndefinedUnitError, facets
 from pymeasure.instruments._strenum import StrEnum
 from pymeasure.units import ureg
 
-from .parameters import Measurable, Metadata, Parameter
+from .parameters import Measurable, Metadata, Parameter, ParameterGroup
 
 log = logging.getLogger(__name__)
 log.addHandler(logging.NullHandler())
@@ -145,8 +145,9 @@ class Procedure:
         if not self._parameters:
             self._parameters = {}
         for item, parameter in inspect.getmembers(self.__class__):
-            if isinstance(parameter, Parameter):
-                self._parameters[item] = deepcopy(parameter)
+            if isinstance(parameter, (Parameter, ParameterGroup)):
+                # a ParameterGroup behaves like a Parameter (value, is_set, group_by, name)
+                self._parameters[item] = deepcopy(parameter)  # type: ignore[reportArgumentType]
 
     def parameters_are_set(self) -> bool:
         """ Returns True if all parameters are set """

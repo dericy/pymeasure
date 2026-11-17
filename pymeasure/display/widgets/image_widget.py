@@ -26,6 +26,7 @@ import logging
 from collections.abc import Sequence
 from typing import cast
 
+import pyqtgraph as pg
 from qtpy.QtWidgets import QGraphicsObject
 
 from ...experiment.results import Results
@@ -52,9 +53,11 @@ class ImageWidget(TabWidget[ResultsImage], QtWidgets.QWidget):
         z_axis: str | None = None,
         refresh_time: float = 0.2,
         check_status: bool = True,
+        selectors: Sequence[str] | None = None,
         parent: QtWidgets.QWidget | None = None,
     ):
         super().__init__(name=name, parent=parent)
+        self.selectors = list(selectors) if selectors else []
         self.columns = columns
         self.refresh_time = refresh_time
         self.check_status = check_status
@@ -173,3 +176,19 @@ class ImageWidget(TabWidget[ResultsImage], QtWidgets.QWidget):
                 frame._install_window_filter()
             except (RuntimeError, TypeError, AttributeError):
                 pass
+
+    def selection_tags(self) -> list[str]:
+        return ["1D", "2D"]
+
+    def enter_selection_mode(self, initial_range: tuple) -> None:
+        super().enter_selection_mode(initial_range)
+        start_x, stop_x, start_y, stop_y = initial_range
+        self.rect_reg = pg.RectROI([start_x, start_y], [stop_x - start_x, stop_y - start_y])
+        self.rect_reg.setPen(pg.mkPen("black"))
+        self.image_frame.plot_widget.addItem(self.rect_reg)
+
+    def exit_selection_mode(self):
+        start_x, start_y = self.rect_reg.pos()
+        size_x, size_y = self.rect_reg.size()
+        self.image_frame.plot_widget.removeItem(self.rect_reg)
+        return (start_x, start_x+size_x, start_y, start_y+size_y)

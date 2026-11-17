@@ -29,6 +29,7 @@ import shutil
 import subprocess
 import tempfile
 from collections.abc import Mapping
+from typing import cast
 
 import pyqtgraph as pg
 
@@ -51,6 +52,27 @@ from ..widgets import (
 
 log = logging.getLogger(__name__)
 log.addHandler(logging.NullHandler())
+
+
+class TabArea(QtWidgets.QTabWidget):
+    selection_started = QtCore.Signal()
+    selection_completed = QtCore.Signal(object)
+
+    def start_selection(self, selector, tag, initial_range):
+        self.selection_started.emit()
+        wdg = cast(TabWidget, self.currentWidget())
+        if tag not in wdg.selection_tags() or selector not in wdg.selectors:
+            return
+        if wdg.selection_active:
+            return  # the selection in progress completes first
+
+        def complete(result):
+            # one-shot, so that the result of a later selection does not reach this selector
+            wdg.selection_finished.disconnect(complete)
+            self.selection_completed.emit([selector, result])
+
+        wdg.selection_finished.connect(complete)
+        wdg.enter_selection_mode(initial_range)
 
 
 class ManagedWindowBase(QtWidgets.QMainWindow):
@@ -264,7 +286,9 @@ class ManagedWindowBase(QtWidgets.QMainWindow):
             estimator_dock.setFeatures(QtWidgets.QDockWidget.DockWidgetFeature.NoDockWidgetFeatures)
             self.addDockWidget(QtCore.Qt.DockWidgetArea.LeftDockWidgetArea, estimator_dock)
 
-        self.tabs = QtWidgets.QTabWidget(self.main)
+        self.tabs = TabArea(self.main)
+        self.inputs.selection_triggered.connect(self.tabs.start_selection)
+        self.tabs.selection_completed.connect(self.inputs.set_selector)
         for wdg in self.widget_list:
             self.tabs.addTab(wdg, wdg.name)
 

@@ -21,7 +21,6 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 # THE SOFTWARE.
 #
-
 from __future__ import annotations
 
 import logging
@@ -31,6 +30,8 @@ import pyqtgraph as pg
 from qtpy import QtWidgets
 
 from pymeasure.experiment.results import Results
+
+from ..Qt import QtCore, QtGui
 
 log = logging.getLogger(__name__)
 log.addHandler(logging.NullHandler())
@@ -48,10 +49,12 @@ class TabWidget(QtWidgets.QWidget, Generic[Curve]):
         users should inherit from this class and provide an
         implementation of these methods.
     """
+    selection_finished = QtCore.Signal(object)
 
     def __init__(self, name: str, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.name = name
+        self.selection_active = False
 
     def new_curve(self, results: Results, color=DEFAULT_COLOR, **kwargs) -> Curve:
         """ Create a new curve """
@@ -65,6 +68,9 @@ class TabWidget(QtWidgets.QWidget, Generic[Curve]):
 
     def set_color(self, curve: Curve, color) -> None:
         """ Set color for widget """
+
+    def start_selection(self):
+        pass
 
     def preview_widget(self, parent: QtWidgets.QWidget | None = None) -> TabWidget | None:
         """ Return a Qt widget suitable for preview during loading
@@ -81,3 +87,19 @@ class TabWidget(QtWidgets.QWidget, Generic[Curve]):
         """
 
         return
+
+    def selection_tags(self) -> list[str]:
+        return []
+
+    def enter_selection_mode(self, initial_range: tuple) -> None:
+        if not self.selection_active:
+            self.selection_active = True
+
+    def exit_selection_mode(self):
+        return None
+
+    def keyPressEvent(self, event: QtGui.QKeyEvent | None) -> None:
+        if event is not None and event.key() == QtCore.Qt.Key.Key_A and self.selection_active:
+            self.selection_finished.emit(self.exit_selection_mode())
+            self.selection_active = False
+        super().keyPressEvent(event)

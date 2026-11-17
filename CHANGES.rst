@@ -38,6 +38,10 @@ Instruments
 
 GUI
 ---
+- Add :class:`.ParameterGroup`, :class:`.Range1DParameterGroup` and :class:`.Range2DParameterGroup` to edit several parameters as one value of a :class:`.Procedure`, shown in the GUI as collapsible input groups, and the :code:`group_name` argument of :class:`.Parameter`.
+- Add the :code:`selectors` argument to :class:`.PlotWidget` and :class:`.ImageWidget` to select the range of a range group on the plot (confirm with the :kbd:`A` key).
+- Add trailing buttons (reset to default) to the inputs and the :class:`.UncertQuantInput` for :class:`.PhysicalParameter`.
+- **Breaking:** :class:`.Input` and its subclasses are now :code:`QWidget` wrappers around the actual Qt widget (:code:`input.widget`) instead of mix-ins of it. Custom inputs have to be adapted: the methods :code:`setValue`, :code:`value` and :code:`setSuffix` are :code:`set_value`, :code:`get_value` and :code:`set_units`.
 - Tear down plot frames and their crosshairs safely when a plot is closed or deleted, which fixes intermittent crashes during window and test teardown.
 
 Version 0.16.0 (2026-05-20)

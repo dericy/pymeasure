@@ -28,12 +28,15 @@ from functools import partial
 
 from ...experiment import parameters
 from ...experiment.procedure import Procedure
+from ..input_groups import InputGroup, Range1DInputGroup, Range2DInputGroup
 from ..inputs import (
     BooleanInput,
+    Input,
     IntegerInput,
     ListInput,
     ScientificInput,
     StringInput,
+    UncertQuantInput,
     VectorInput,
 )
 from ..Qt import QtCore, QtWidgets
@@ -46,6 +49,7 @@ class InputsWidget(QtWidgets.QWidget):
     """
     Widget wrapper for various :doc:`inputs`
     """
+    selection_triggered = QtCore.Signal(str, str, object)
 
     # tuple of Input classes that do not need an external label
     NO_LABEL_INPUTS = (BooleanInput,)
@@ -67,15 +71,38 @@ class InputsWidget(QtWidgets.QWidget):
         self._hide_groups = hide_groups
         self._setup_visibility_groups()
 
-    def _setup_ui(self):
+    def set_selector(self, data):
+        selector = data[0]
+        result = data[1]
+        selector_widget = getattr(self, selector)
+        selector_widget.set_range(result)
+
+    def _setup_ui(self) -> None:
         parameter_objects = self._procedure.parameter_objects()
         for name in self._inputs:
             parameter = parameter_objects[name]
-            if parameter.ui_class is not None:
+
+            if isinstance(parameter, parameters.Range1DParameterGroup):
+                element = Range1DInputGroup(parameter)
+                element.selection_triggered.connect(
+                    partial(self.selection_triggered.emit, name, "1D"))
+
+            elif isinstance(parameter, parameters.Range2DParameterGroup):
+                element = Range2DInputGroup(parameter)
+                element.selection_triggered.connect(
+                    partial(self.selection_triggered.emit, name, "2D"))
+
+            elif isinstance(parameter, parameters.ParameterGroup):
+                element = InputGroup(parameter)
+
+            elif parameter.ui_class is not None:
                 element = parameter.ui_class(parameter)
 
             elif isinstance(parameter, parameters.FloatParameter):
                 element = ScientificInput(parameter)
+
+            elif isinstance(parameter, parameters.PhysicalParameter):
+                element = UncertQuantInput(parameter)
 
             elif isinstance(parameter, parameters.IntegerParameter):
                 element = IntegerInput(parameter)
@@ -102,13 +129,15 @@ class InputsWidget(QtWidgets.QWidget):
         self.labels = {}
         parameters = self._procedure.parameter_objects()
         for name in self._inputs:
-            if not isinstance(getattr(self, name), self.NO_LABEL_INPUTS):
+            input_inst: Input = getattr(self, name)
+            if not isinstance(input_inst, (*self.NO_LABEL_INPUTS, InputGroup)):
                 label = QtWidgets.QLabel(self)
                 label.setText(f"{parameters[name].name}:")
                 vbox.addWidget(label)
+                vbox.addWidget(input_inst)
                 self.labels[name] = label
-
-            vbox.addWidget(getattr(self, name))
+            else:
+                vbox.addWidget(input_inst)
 
         if inputs_in_scrollarea:
             scroll_area = QtWidgets.QScrollArea()
@@ -128,7 +157,7 @@ class InputsWidget(QtWidgets.QWidget):
 
         self.setLayout(vbox)
 
-    def _setup_visibility_groups(self) -> None:
+    def _setup_visibility_groups(self):
         groups = {}
         parameters = self._procedure.parameter_objects()
         for name in self._inputs:
@@ -149,26 +178,27 @@ class InputsWidget(QtWidgets.QWidget):
 
                 groups[group_name].append((name, condition, group_state))
 
+        # TODO: Functions for grouping should not depend on Qt.
         for group_name, group in groups.items():
             toggle = partial(self.toggle_group, group_name=group_name, group=group)
             group_el = getattr(self, group_name)
             if isinstance(group_el, BooleanInput):
-                group_el.toggled.connect(toggle)
-                toggle(group_el.isChecked())
+                group_el.widget.toggled.connect(toggle)
+                toggle(group_el.widget.isChecked())
             elif isinstance(group_el, (StringInput, VectorInput)):
-                group_el.textChanged.connect(toggle)
-                toggle(group_el.text())
+                group_el.widget.textChanged.connect(toggle)
+                toggle(group_el.widget.text())
             elif isinstance(group_el, (IntegerInput, ScientificInput)):
-                group_el.valueChanged.connect(toggle)
-                toggle(group_el.value())
+                group_el.widget.valueChanged.connect(toggle)
+                toggle(group_el.widget.value())
             elif isinstance(group_el, ListInput):
-                group_el.currentTextChanged.connect(toggle)
-                toggle(group_el.currentText())
+                group_el.widget.currentTextChanged.connect(toggle)
+                toggle(group_el.widget.currentText())
             else:
                 raise NotImplementedError(
                     f"Grouping based on {group_name} ({group_el}) is not implemented.")
 
-    def toggle_group(self, state, group_name, group) -> None:
+    def toggle_group(self, state, group_name, group):
         for (name, condition, group_state) in group:
             if callable(condition):
                 group_state[group_name] = condition(state)

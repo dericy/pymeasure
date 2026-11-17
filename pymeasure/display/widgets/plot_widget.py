@@ -51,9 +51,11 @@ class PlotWidget(TabWidget[ResultsCurve], QtWidgets.QWidget):
         refresh_time: float = 0.2,
         check_status: bool = True,
         linewidth: float = 1,
+        selectors: Sequence[str] | None = None,
         parent: QtWidgets.QWidget | None = None,
     ):
         super().__init__(name=name, parent=parent)
+        self.selectors = list(selectors) if selectors else []
         self.columns = columns
         self.refresh_time = refresh_time
         self.check_status = check_status
@@ -90,6 +92,11 @@ class PlotWidget(TabWidget[ResultsCurve], QtWidgets.QWidget):
             self.check_status,
             parent=self,
         )
+
+        self.roi = None
+        self.selection_active = False
+        self.start_pos = None
+
         self.updated = self.plot_frame.updated
         self.plot: pg.PlotItem | None = self.plot_frame.plot
         self.columns_x.setCurrentIndex(0)
@@ -213,3 +220,17 @@ class PlotWidget(TabWidget[ResultsCurve], QtWidgets.QWidget):
                 frame._install_window_filter()
             except (RuntimeError, TypeError, AttributeError):
                 pass
+
+    def selection_tags(self) -> list[str]:
+        return ["1D"]
+
+    def enter_selection_mode(self, initial_range: tuple) -> None:
+        super().enter_selection_mode(initial_range)
+        self.linear_reg = pg.LinearRegionItem()
+        self.linear_reg.setRegion(initial_range)
+        self.plot_frame.plot_widget.addItem(self.linear_reg)
+
+    def exit_selection_mode(self):
+        x1, x2 = self.linear_reg.getRegion()
+        self.plot_frame.plot_widget.removeItem(self.linear_reg)
+        return (x1, x2, 0, 0)
