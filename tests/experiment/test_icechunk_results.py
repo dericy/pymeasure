@@ -581,3 +581,37 @@ class TestDefaultStore:
         results.store(record(0))
         finish_with(results)
         assert load_group(tmp_path / "data" / "store", "DATA_1").sizes["record"] == 1
+
+
+class TestDisplay:
+    def test_default_results_show_the_file(self, tmp_path):
+        results = Results(_Procedure(), str(tmp_path / "data.csv"))
+        assert results.display_name == "data.csv"
+        assert results.display_details == str(tmp_path / "data.csv")
+        assert results.is_file is True
+
+    def test_icechunk_results_show_the_commit_message_and_the_store(self, tmp_path):
+        results = IcechunkResults(
+            _Procedure(), tmp_path / "store", group="{Sample}", message="Run of {Sample}",
+            branch="dev",
+        )
+        store = str(tmp_path / "store")
+        assert results.display_name == f"Run of S1 \u2014 {store}#S1_1"
+        details = results.display_details.splitlines()
+        assert details == [f"Store: {store}", "Group: S1_1", "Branch: dev",
+                           "Commit message: Run of S1"]
+        assert results.is_file is False
+
+    def test_a_store_in_memory(self):
+        results = IcechunkResults(_Procedure(), None, message="Test")
+        assert results.display_name == "Test \u2014 in-memory#DATA_1"
+
+    def test_the_name_follows_a_group_that_had_to_change(self, storage):
+        results = IcechunkResults(_Procedure(), storage, group="g", message="m")
+        icechunk_store._RESERVED.clear()
+        other = IcechunkResults(_Procedure(), storage, group="g")
+        other.store(record(0))
+        finish_with(other)
+        results.store(record(1))
+        finish_with(results)
+        assert results.display_name.endswith("#g_2")

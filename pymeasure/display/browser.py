@@ -24,7 +24,6 @@
 
 import logging
 from collections.abc import Iterable
-from os.path import basename
 from typing import cast
 
 from pymeasure.display.manager import Experiment
@@ -60,7 +59,8 @@ class BrowserItem(QtWidgets.QTreeWidgetItem, BaseBrowserItem):
         self.setIcon(0, QtGui.QIcon(pixelmap))
         self.setFlags(self.flags() | QtCore.Qt.ItemFlag.ItemIsUserCheckable)
         self.setCheckState(0, QtCore.Qt.CheckState.Checked)
-        self.setText(1, basename(results.data_filename))
+        self.setText(1, results.display_name)
+        self.setToolTip(1, results.display_details)
 
         self.setStatus(results.procedure.status)
 

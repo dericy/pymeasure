@@ -769,6 +769,20 @@ class IcechunkResults(Results):
     def make_recorder(self, queue):
         return IcechunkRecorder(self, queue)
 
+    @property
+    def display_name(self) -> str:
+        """The commit message and the store with the group, as shown in the list of experiments."""
+        return f"{self.message} \u2014 {self.data_filename}"
+
+    @property
+    def display_details(self) -> str:
+        return (f"Store: {self.store_name}\nGroup: {self.group}\nBranch: {self.branch}\n"
+                f"Commit message: {self.message}")
+
+    @property
+    def is_file(self) -> bool:
+        return False
+
     def __repr__(self) -> str:
         return f"<{self.__class__.__name__}(group='{self.group}', store='{self.store_name}')>"
 

@@ -22,6 +22,7 @@
 # THE SOFTWARE.
 #
 
+import os
 from unittest import mock
 
 import pytest
@@ -66,6 +67,8 @@ def make_tree_and_item(qtbot):
     def _make(data_filename="/path/to/test_data.csv"):
         results = mock.MagicMock(spec=Results)
         results.data_filename = data_filename
+        results.display_name = os.path.basename(data_filename)  # as Results.display_name
+        results.display_details = data_filename  # as Results.display_details
         results.procedure = mock.MagicMock(spec=Procedure)
         results.procedure.status = ProcedureStatus.QUEUED
         color = QtGui.QColor(255, 255, 255)

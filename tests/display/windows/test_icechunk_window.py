@@ -31,7 +31,7 @@ pytest.importorskip("icechunk", reason="needs Python >= 3.11 and pymeasure[icech
 pytest.importorskip("xarray")
 pytest.importorskip("zarr")
 
-from pymeasure.display.Qt import QtWidgets  # noqa: E402
+from pymeasure.display.Qt import QtCore, QtWidgets  # noqa: E402
 from pymeasure.display.widgets import IcechunkInputWidget  # noqa: E402
 from pymeasure.display.windows.managed_window import ManagedWindow  # noqa: E402
 from pymeasure.experiment import IntegerParameter, Procedure  # noqa: E402
@@ -118,3 +118,66 @@ def test_queue_without_a_store_does_nothing(qtbot, tmp_path, monkeypatch):
     window.queue()
     assert not list(window.manager.experiments)
     assert "No icechunk store" in window.icechunk_input.status_label.text()
+
+
+def menu_actions(window, item, monkeypatch):
+    """Open the context menu of ``item`` without showing it; return {text: enabled}."""
+    from pymeasure.display.windows import managed_window
+
+    seen = {}
+
+    class RecordingMenu(QtWidgets.QMenu):
+        def exec(self, *args, **kwargs):
+            seen.update({action.text(): action.isEnabled() for action in self.actions()
+                         if action.text()})
+
+    monkeypatch.setattr(managed_window.QtWidgets, "QMenu", RecordingMenu)
+    monkeypatch.setattr(window.browser, "itemAt", lambda pos: item)
+    window.browser.setCurrentItem(item)
+    window.browser_item_menu(QtCore.QPoint(0, 0))
+    return seen
+
+
+def test_list_shows_commit_message_and_store(qtbot, tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("PYMEASURE_ICECHUNK_STORE", raising=False)
+    window = _Window(tmp_path / "store")
+    qtbot.addWidget(window)
+    window.icechunk_input.commit_message = "Sweep of {Iterations} points"
+    window.icechunk_input.group = "sweep"
+    with qtbot.waitSignal(window.icechunk_input.saved, timeout=60000):
+        window.queue()
+    item = window.browser.topLevelItem(0)
+    store = str(tmp_path / "store")
+    assert item.text(1) == f"Sweep of 8 points \u2014 {store}#sweep_1"
+    assert "csv" not in item.text(1)
+    assert item.toolTip(1).splitlines() == [
+        f"Store: {store}", "Group: sweep_1", "Branch: main", "Commit message: Sweep of 8 points"]
+
+
+def test_file_actions_are_disabled_for_icechunk_data(qtbot, tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("PYMEASURE_ICECHUNK_STORE", raising=False)
+    window = _Window(tmp_path / "store")
+    qtbot.addWidget(window)
+    with qtbot.waitSignal(window.icechunk_input.saved, timeout=60000):
+        window.queue()
+    actions = menu_actions(window, window.browser.topLevelItem(0), monkeypatch)
+    assert actions["Open Data Externally"] is False
+    assert actions["Save Data File Copy"] is False
+    assert actions["Reveal in File Explorer"] is True  # the folder that holds the store
+
+
+def test_file_actions_stay_enabled_for_csv_data(qtbot, tmp_path, monkeypatch):
+    from pymeasure.experiment import Results
+    monkeypatch.chdir(tmp_path)
+    window = ManagedWindow(_Procedure, inputs=["iterations"], x_axis="Iteration",
+                           y_axis="Voltage (V)")
+    qtbot.addWidget(window)
+    results = Results(window.make_procedure(), str(tmp_path / "data.csv"))
+    with qtbot.waitSignal(window.manager.finished, timeout=60000):
+        window.manager.queue(window.new_experiment(results))
+    item = window.browser.topLevelItem(0)
+    assert item.text(1) == "data.csv" and item.toolTip(1) == str(tmp_path / "data.csv")
+    actions = menu_actions(window, item, monkeypatch)
+    assert actions["Open Data Externally"] and actions["Save Data File Copy"]

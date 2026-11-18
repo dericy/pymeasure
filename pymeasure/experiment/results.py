@@ -332,6 +332,24 @@ class Results:
         from .listeners import Recorder
         return Recorder(self, queue)
 
+    @property
+    def display_name(self) -> str:
+        """Text that identifies these results in the list of experiments of a graphical
+        interface; by default the name of the data file."""
+        return os.path.basename(self.data_filename)
+
+    @property
+    def display_details(self) -> str:
+        """Longer description of where the data is, shown as the tooltip in the list of
+        experiments; by default the path of the data file."""
+        return self.data_filename
+
+    @property
+    def is_file(self) -> bool:
+        """Whether the data is in the file :attr:`data_filename` (so that it can be opened,
+        revealed and copied as a file). Results that keep their data elsewhere return ``False``."""
+        return True
+
     def header(self) -> str:
         """Return a text header to accompany a datafile so that the procedure can be reconstructed.
         """

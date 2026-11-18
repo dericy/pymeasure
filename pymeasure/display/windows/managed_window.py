@@ -322,7 +322,7 @@ class ManagedWindowBase(QtWidgets.QMainWindow):
             # Open
             action_open = QtGui.QAction(menu)
             action_open.setText("Open Data Externally")
-            if len(experiments) > 1:
+            if len(experiments) > 1 or (experiment is not None and not experiment.results.is_file):
                 action_open.setEnabled(False)
             if experiment is not None:
                 action_open.triggered.connect(
@@ -342,7 +342,7 @@ class ManagedWindowBase(QtWidgets.QMainWindow):
             # Save a copy of the datafile
             action_save = QtGui.QAction(menu)
             action_save.setText("Save Data File Copy")
-            if len(experiments) > 1:
+            if len(experiments) > 1 or (experiment is not None and not experiment.results.is_file):
                 action_save.setEnabled(False)
             if experiment is not None:
                 action_save.triggered.connect(

@@ -359,6 +359,18 @@ If the final commit fails, the data is written to a temporary CSV file, the name
 With the save checkbox of the widget switched off a store in memory is used: the plots work, but nothing is kept.
 The group is chosen when the experiment is queued, so that experiments that are queued one after the other get different groups.
 Experiments of one store should not be recorded by several programs at the same time (the local-file storage of icechunk is not safe for that).
+
+In the list of experiments, an experiment recorded this way shows its commit message and the store with the group (:code:`message — path/to/store#group`) instead of a file name, and the tooltip lists the store, group, branch and commit message.
+The column is headed "Filename"; to relabel it and show both ends of the long text, in the :code:`__init__` of the window:
+
+.. code-block:: python
+
+    self.browser.headerItem().setText(1, "Commit message — store#group")
+    self.browser.setTextElideMode(QtCore.Qt.TextElideMode.ElideMiddle)
+    self.browser.header().resizeSection(1, 460)
+
+"Open Data Externally" and "Save Data File Copy" in the context menu of the list are disabled for such experiments, as there is no file; "Reveal in File Explorer" opens the folder that contains the store.
+Other kinds of :class:`~pymeasure.experiment.results.Results` can choose what the list shows by overriding :attr:`~pymeasure.experiment.results.Results.display_name`, :attr:`~pymeasure.experiment.results.Results.display_details` and :attr:`~pymeasure.experiment.results.Results.is_file`.
 Icechunk's local-filesystem storage is not safe for several processes that commit at the same time; use an object store for that (pass its :code:`icechunk.Storage` to :func:`~pymeasure.experiment.icechunk_store.save_results_to_icechunk`, or give the widget a :code:`storage_factory`).
 
 Customising the plot options
