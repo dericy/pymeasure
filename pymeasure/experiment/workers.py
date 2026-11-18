@@ -33,7 +33,6 @@ from typing import Any
 import numpy as np
 
 from ..thread import StoppableThread
-from .listeners import Recorder
 from .procedure import ProcedureStatus
 from .results import Results
 
@@ -206,7 +205,7 @@ class Worker(StoppableThread):
 
         self.procedure = self.results.procedure
 
-        self.recorder = Recorder(self.results, self.recorder_queue)
+        self.recorder = self.results.make_recorder(self.recorder_queue)
         self.recorder.start()
 
         # locals()[self.procedures_file] = __import__(self.procedures_file)

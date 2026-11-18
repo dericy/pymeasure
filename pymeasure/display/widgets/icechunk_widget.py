@@ -27,7 +27,9 @@ import re
 import textwrap
 
 from ...experiment.icechunk_store import (
+    IcechunkResults,
     IcechunkSaveResult,
+    default_store,
     parse_metadata_text,
     save_results_to_icechunk,
 )
@@ -129,6 +131,11 @@ class IcechunkInputWidget(QtWidgets.QWidget):
                 self.addDockWidget(QtCore.Qt.DockWidgetArea.LeftDockWidgetArea, dock)
                 self.manager.finished.connect(self.icechunk_input.experiment_finished)
 
+    The store field starts with the default store, if one is configured: the environment
+    variable ``PYMEASURE_ICECHUNK_STORE``, or the entry ``PYMEASURE_ICECHUNK_STORE=...`` of a
+    ``.env`` file in the working directory or one of its parents (see
+    :func:`~pymeasure.experiment.icechunk_store.default_store`). An empty field uses it too.
+
     This needs the optional dependencies ``icechunk``, ``zarr`` and ``xarray``
     (``pip install pymeasure[icechunk]``, Python 3.11 or newer).
 
@@ -145,13 +152,23 @@ class IcechunkInputWidget(QtWidgets.QWidget):
     #: Emitted with the error message if a save failed.
     failed = QtCore.Signal(str)
 
+    # results report from the thread of the worker; these signals bring that to the GUI thread
+    _commit_done = QtCore.Signal(object)
+    _commit_failed = QtCore.Signal(str)
+
     def __init__(self, procedure_class, parent=None, storage_factory=None):
         super().__init__(parent)
         self.procedure_class = procedure_class
         self.storage_factory = storage_factory
+        self._commit_done.connect(self._show_saved)
+        self._commit_failed.connect(self._show_failed)
 
         self._setup_ui()
         self._layout()
+
+        default = default_store()  # environment variable or .env file
+        if default:
+            self.store = default
 
     def _setup_ui(self):
         self.save_toggle = QtWidgets.QCheckBox("Save data", self)
@@ -289,9 +306,7 @@ class IcechunkInputWidget(QtWidgets.QWidget):
             ``None`` if the save failed.
         """
         try:
-            store = self.store.strip()
-            if not store:
-                raise ValueError("No icechunk store is selected.")
+            store = self._store_text()
             storage = self.storage_factory(store) if self.storage_factory else store
             result = save_results_to_icechunk(
                 results,
@@ -301,15 +316,68 @@ class IcechunkInputWidget(QtWidgets.QWidget):
                 branch=self.branch,
                 metadata=parse_metadata_text(self.metadata_text),
             )
-        except Exception as exc:  # noqa: BLE001  (an exception in a Qt slot would abort the app)
+        except Exception as exc:
             log.exception("Failed to save the data to the icechunk store")
-            first_line = (str(exc).strip().splitlines() or [type(exc).__name__])[0]
-            self.status_label.setStyleSheet("color: red")
-            self.status_label.setText(f"Not saved: {first_line}")
-            self.failed.emit(str(exc))
+            self._show_failed(str(exc))
             return None
         self._show_saved(result)
         return result
+
+    def new_results(self, procedure):
+        """Create :class:`~pymeasure.experiment.icechunk_store.IcechunkResults` for ``procedure``
+        with the current settings of the fields, to use instead of a CSV file.
+
+        The data of the experiment is then written to the store while it runs and the plots read
+        it from there; the widget shows the outcome of the final commit. If saving is switched
+        off, a store in memory is used (the data can be plotted, but is not kept).
+        Meant for the ``queue`` method of a window, see the tutorial. Do not connect
+        :meth:`experiment_finished` as well, that would save the data a second time.
+
+        Errors (for example an invalid placeholder) do not propagate: they are logged, shown
+        below the fields and emitted as :attr:`failed`.
+
+        :param procedure: Procedure of the experiment.
+        :returns: The results, or ``None`` if they could not be created.
+        """
+        try:
+            if self.store_measurement:
+                store = self._store_text()
+                store = self.storage_factory(store) if self.storage_factory else store
+            else:
+                store = None
+            results = IcechunkResults(
+                procedure,
+                store,
+                group=self.group,
+                message=self.commit_message,
+                branch=self.branch,
+                metadata=parse_metadata_text(self.metadata_text),
+                on_commit=self._commit_done.emit,
+                on_error=lambda exc: self._commit_failed.emit(str(exc)),
+            )
+        except Exception as exc:
+            log.exception("Failed to prepare the icechunk store")
+            self._show_failed(str(exc))
+            return None
+        self.status_label.setStyleSheet("")
+        self.status_label.setText(f"Recording in '{results.group}' on branch '{results.branch}'")
+        return results
+
+    def _store_text(self) -> str:
+        """The store field, or the default store (see
+        :func:`~pymeasure.experiment.icechunk_store.default_store`) if the field is empty."""
+        store = self.store.strip() or default_store()
+        if not store:
+            raise ValueError(
+                "No icechunk store is selected (and no default store is set in the environment "
+                "variable PYMEASURE_ICECHUNK_STORE or in a .env file).")
+        return store
+
+    def _show_failed(self, message: str):
+        first_line = (message.strip().splitlines() or ["unknown error"])[0]
+        self.status_label.setStyleSheet("color: red")
+        self.status_label.setText(f"Not saved: {first_line}")
+        self.failed.emit(message)
 
     def _show_saved(self, result: IcechunkSaveResult):
         self.status_label.setStyleSheet("")

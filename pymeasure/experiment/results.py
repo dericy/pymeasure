@@ -318,6 +318,20 @@ class Results:
         del self._module
         del self._file
 
+    def make_recorder(self, queue):
+        """Return the (not yet started) listener that stores the records emitted by the
+        procedure while it runs.
+
+        The :class:`~pymeasure.experiment.workers.Worker` calls this method, so that a subclass
+        that keeps its data somewhere else than in a CSV file can supply its own recorder.
+        The returned object has the interface of a :class:`.Recorder`: ``start()``, ``stop()``
+        and ``handle(record)``.
+
+        :param queue: Queue of the worker, in which the records are put.
+        """
+        from .listeners import Recorder
+        return Recorder(self, queue)
+
     def header(self) -> str:
         """Return a text header to accompany a datafile so that the procedure can be reconstructed.
         """

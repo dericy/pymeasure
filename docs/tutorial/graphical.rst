@@ -300,6 +300,65 @@ It is read back with :func:`~pymeasure.experiment.icechunk_store.load_group` or 
 The saving is done in the GUI thread, so a store on a slow network location blocks the window while it is written.
 Errors do not stop the experiment: they are logged and shown below the fields.
 Only experiments that finish are saved; connect :code:`self.manager.abort_returned` or :code:`self.manager.failed` to the same slot to keep the data of aborted or failed experiments as well.
+
+Default store
+.............
+
+The store field starts with a default store, so that it does not have to be typed (or set in every script).
+The default is the environment variable :code:`PYMEASURE_ICECHUNK_STORE`; if that is not set, the entry of the same name in the first :code:`.env` file found in the working directory or one of its parent directories:
+
+.. code-block:: text
+
+    # .env
+    PYMEASURE_ICECHUNK_STORE=data/lab_store
+
+A relative path in a :code:`.env` file is relative to the directory of that file; a value with :code:`://` (for example an S3 URL used with a :code:`storage_factory`) is used as it is.
+Setting :code:`icechunk_input.store` in the code, or typing in the field, overrides the default, and an empty field uses it.
+The :code:`.env` file is only read: :code:`os.environ` is not changed.
+Do not commit it if it contains paths of your own machine.
+The function :func:`~pymeasure.experiment.icechunk_store.default_store` returns the default.
+
+Recording in the store instead of a CSV file
+............................................
+
+Instead of saving a copy at the end, the store can be where the experiment writes its data, with the live plots reading it from the store and no CSV file at all.
+Switch off the file inputs of the window and create :class:`~pymeasure.experiment.icechunk_store.IcechunkResults` in the :code:`queue` method (as the method of the window is replaced, :code:`enable_file_input=False` is needed), with the widget providing the settings:
+
+.. code-block:: python
+
+    class MainWindow(ManagedWindow):
+
+        def __init__(self):
+            super().__init__(
+                procedure_class=TestProcedure,
+                inputs=['iterations', 'delay', 'seed'],
+                x_axis='Iteration',
+                y_axis='Random Number',
+                enable_file_input=False,
+            )
+            self.icechunk_input = IcechunkInputWidget(TestProcedure, parent=self)
+            dock = QtWidgets.QDockWidget('Icechunk store')
+            dock.setWidget(self.icechunk_input)
+            dock.setFeatures(QtWidgets.QDockWidget.DockWidgetFeature.NoDockWidgetFeatures)
+            self.addDockWidget(QtCore.Qt.DockWidgetArea.LeftDockWidgetArea, dock)
+
+        def queue(self, procedure=None):
+            if procedure is None:
+                procedure = self.make_procedure()
+            results = self.icechunk_input.new_results(procedure)
+            if results is None:  # for example no store; the widget shows why
+                return
+            self.manager.queue(self.new_experiment(results))
+
+Do not connect :code:`experiment_finished` in this mode, as the data would be saved twice.
+
+While the experiment runs, the emitted records are collected and appended in batches to the arrays of one group of the store, and the data that the plots and tables show is read back from the store.
+The data is committed every 10 seconds (:code:`commit_interval` of :class:`~pymeasure.experiment.icechunk_store.IcechunkResults`), so that other programs can follow the run, and when it ends.
+The last commit has the status of the run (:code:`Finished`, :code:`Aborted` or :code:`Failed`) in its metadata and in the attributes of the group, so the data of aborted and failed experiments is kept.
+If the final commit fails, the data is written to a temporary CSV file, the name of which is logged.
+With the save checkbox of the widget switched off a store in memory is used: the plots work, but nothing is kept.
+The group is chosen when the experiment is queued, so that experiments that are queued one after the other get different groups.
+Experiments of one store should not be recorded by several programs at the same time (the local-file storage of icechunk is not safe for that).
 Icechunk's local-filesystem storage is not safe for several processes that commit at the same time; use an object store for that (pass its :code:`icechunk.Storage` to :func:`~pymeasure.experiment.icechunk_store.save_results_to_icechunk`, or give the widget a :code:`storage_factory`).
 
 Customising the plot options

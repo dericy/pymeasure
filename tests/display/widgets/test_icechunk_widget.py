@@ -64,6 +64,14 @@ def _clean_root_logging_handlers():
             root.removeHandler(handler)
 
 
+@pytest.fixture(autouse=True)
+def _no_default_store(monkeypatch, tmp_path_factory):
+    """The default store comes from the environment or a .env file: do not let either of the
+    machine that runs the tests in."""
+    monkeypatch.delenv("PYMEASURE_ICECHUNK_STORE", raising=False)
+    monkeypatch.chdir(tmp_path_factory.mktemp("cwd"))
+
+
 def make_results(tmp_path, rows=3):
     results = Results(_Procedure(), str(tmp_path / "data.csv"))
     with open(results.data_filename, "a", encoding="utf-8") as file:
@@ -343,3 +351,124 @@ def test_saves_every_finished_experiment_of_a_managed_window(qtbot, store, tmp_p
     with qtbot.waitSignal(widget.saved, timeout=5000):
         window.manager.finished.emit(experiment)
     assert load_group(store, "DATA_1")["Current (A)"].size == 3
+
+
+# ---- default store (environment variable or .env file) -----------------------------------------
+
+def test_default_store_from_the_environment(qtbot, monkeypatch, tmp_path):
+    monkeypatch.setenv("PYMEASURE_ICECHUNK_STORE", str(tmp_path / "env_store"))
+    wdg = IcechunkInputWidget(_Procedure)
+    qtbot.addWidget(wdg)
+    assert wdg.store == str(tmp_path / "env_store")
+
+
+def test_default_store_from_a_dotenv_file(qtbot, tmp_path, monkeypatch):
+    (tmp_path / ".env").write_text("PYMEASURE_ICECHUNK_STORE=lab/store\n")
+    monkeypatch.chdir(tmp_path)
+    wdg = IcechunkInputWidget(_Procedure)
+    qtbot.addWidget(wdg)
+    assert wdg.store == str(tmp_path / "lab" / "store")
+
+
+def test_the_code_can_override_the_default_store(qtbot, monkeypatch):
+    monkeypatch.setenv("PYMEASURE_ICECHUNK_STORE", "/from/environment")
+    wdg = IcechunkInputWidget(_Procedure)
+    qtbot.addWidget(wdg)
+    wdg.store = "/chosen/in/code"
+    assert wdg.store == "/chosen/in/code"
+
+
+def test_an_empty_store_field_falls_back_to_the_default(qtbot, monkeypatch, store):
+    monkeypatch.setenv("PYMEASURE_ICECHUNK_STORE", str(store))
+    wdg = IcechunkInputWidget(_Procedure)
+    qtbot.addWidget(wdg)
+    wdg.store = ""
+    results = wdg.new_results(_Procedure())
+    assert results is not None and results.store_name == str(store)
+    saved = wdg.save(make_results(store.parent))
+    assert saved is not None and saved.store == str(store)
+
+
+# ---- live results ---------------------------------------------------------------------------
+
+def test_new_results_use_the_fields(widget, store):
+    widget.store = str(store)
+    widget.group = "{Sample}/run"
+    widget.branch = "dev"
+    widget.commit_message = "Run {Sample}"
+    widget.metadata_text = "operator=me"
+    results = widget.new_results(_Procedure())
+    assert type(results).__name__ == "IcechunkResults"
+    assert (results.group, results.branch, results.message) == ("S1/run_1", "dev", "Run S1")
+    assert results.extra_metadata == {"operator": "me"}
+    assert widget.status_label.text() == "Recording in 'S1/run_1' on branch 'dev'"
+
+
+def test_new_results_without_a_store(widget, store):
+    failures = []
+    widget.failed.connect(failures.append)
+    assert widget.new_results(_Procedure()) is None
+    assert "No icechunk store is selected" in widget.status_label.text()
+    assert widget.status_label.styleSheet() == "color: red"
+    assert "PYMEASURE_ICECHUNK_STORE" in failures[0]
+
+
+def test_new_results_with_invalid_placeholder(widget, store):
+    failures = []
+    widget.failed.connect(failures.append)
+    widget.store = str(store)
+    widget.group = "{Nope}"
+    assert widget.new_results(_Procedure()) is None
+    assert "Not saved" in widget.status_label.text() and failures
+
+
+def test_new_results_when_saving_is_off_use_memory(widget, store):
+    widget.store = str(store)
+    widget.store_measurement = False
+    results = widget.new_results(_Procedure())
+    assert results.store_name == "in-memory"
+    assert not store.exists()
+
+
+def test_new_results_with_a_storage_factory(qtbot, store):
+    seen = []
+
+    def factory(text):
+        import icechunk
+        seen.append(text)
+        return icechunk.in_memory_storage()
+
+    wdg = IcechunkInputWidget(_Procedure, storage_factory=factory)
+    qtbot.addWidget(wdg)
+    wdg.store = "s3://bucket/store"
+    results = wdg.new_results(_Procedure())
+    assert seen == ["s3://bucket/store"] and results is not None
+
+
+def test_the_final_commit_is_shown_from_the_worker_thread(widget, store):
+    import threading
+    widget.store = str(store)
+    results = widget.new_results(_Procedure())
+    results.store({"Voltage (V)": 1.0, "Current (A)": 2.0})
+    saved = []
+    widget.saved.connect(saved.append)
+    thread = threading.Thread(target=results.finish)  # as the recorder of a worker does
+    thread.start()
+    thread.join()
+    QtWidgets.QApplication.processEvents()
+    assert saved and saved[0].group == "DATA_1"
+    assert widget.status_label.text().startswith("Saved as 'DATA_1'")
+
+
+def test_a_failure_in_the_worker_thread_is_shown(widget, store):
+    import threading
+    widget.store = str(store)
+    results = widget.new_results(_Procedure())
+    failures = []
+    widget.failed.connect(failures.append)
+    thread = threading.Thread(target=lambda: results.on_error(RuntimeError("disk full")))
+    thread.start()
+    thread.join()
+    QtWidgets.QApplication.processEvents()
+    assert failures == ["disk full"]
+    assert widget.status_label.text() == "Not saved: disk full"
