@@ -1,0 +1,42 @@
+name: Rebuild local-all
+
+# Scheduled and manual runs only work from the default branch of the fork (fork-ci), which is why
+# the feature branches do not need to carry this file. To rebuild right after a push, run
+#   git push fork <branch> && gh workflow run local-all.yml
+on:
+  schedule:
+    - cron: "*/30 * * * *"
+  workflow_dispatch:
+    inputs:
+      force:
+        description: "Rebuild even if no source branch changed"
+        type: boolean
+        default: false
+
+concurrency:
+  group: local-all
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  rebuild:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          # A personal access token with "Contents" and "Workflows" write access to this repository
+          # is needed once upstream changes a file under .github/workflows; the built-in token
+          # cannot push such commits.
+          token: ${{ secrets.SYNC_TOKEN || github.token }}
+      - name: Git identity
+        run: |
+          git config user.name "local-all builder"
+          git config user.email "local-all-builder@users.noreply.github.com"
+      - name: Rebuild local-all
+        env:
+          FORCE: ${{ inputs.force && '1' || '0' }}
+        run: bash .github/scripts/sync_local_all.sh branches.txt
