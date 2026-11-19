@@ -34,14 +34,18 @@ icechunk = pytest.importorskip("icechunk", reason="needs Python >= 3.11 and pyme
 xarray = pytest.importorskip("xarray")
 zarr = pytest.importorskip("zarr")
 
-from pymeasure.experiment import (  # noqa: E402
-    IntegerParameter, Metadata, Parameter, Procedure, Results,
+from pymeasure.experiment import (  # noqa: E402  # noqa: E402
+    IntegerParameter,
+    Metadata,
+    Parameter,
+    Procedure,
+    Results,
+    zarr_store,
 )
-from pymeasure.experiment import icechunk_store  # noqa: E402
 from pymeasure.experiment.icechunk_store import (  # noqa: E402
+    STORE_VARIABLE,
     IcechunkRecorder,
     IcechunkResults,
-    STORE_VARIABLE,
     IcechunkSaveResult,
     default_store,
     load_group,
@@ -71,9 +75,9 @@ def storage():
 
 @pytest.fixture(autouse=True)
 def no_reserved_groups():
-    icechunk_store._RESERVED.clear()
+    zarr_store._RESERVED.clear()
     yield
-    icechunk_store._RESERVED.clear()
+    zarr_store._RESERVED.clear()
 
 
 def record(i):
@@ -185,7 +189,8 @@ class TestIcechunkResults:
         results = IcechunkResults(_Procedure(), storage)
         results.store({"Iteration": 0, "Voltage (V)": 1, "Note": "a"})
         results.data  # noqa: B018  (written as integers)
-        results.store({"Iteration": 1, "Voltage (V)": 1.5, "Note": 7})  # float, and a number as text
+        # a float, and a number where there was text
+        results.store({"Iteration": 1, "Voltage (V)": 1.5, "Note": 7})
         results.store({"Iteration": 2, "Voltage (V)": True, "Note": "c"})
         data = results.data
         assert data["Voltage (V)"].tolist() == [1.0, 1.5, 1.0]
@@ -257,7 +262,7 @@ class TestIcechunkResults:
 
     def test_a_group_taken_by_another_writer_is_replaced(self, storage, caplog):
         results = IcechunkResults(_Procedure(), storage, group="g")
-        icechunk_store._RESERVED.clear()  # as if another process chose the same name
+        zarr_store._RESERVED.clear()  # as if another process chose the same name
         other = IcechunkResults(_Procedure(), storage, group="g")
         other.store(record(0))
         finish_with(other)
@@ -270,7 +275,7 @@ class TestIcechunkResults:
 
     def test_the_taken_group_is_an_error_without_index(self, storage):
         results = IcechunkResults(_Procedure(), storage, group="g", index=False)
-        icechunk_store._RESERVED.clear()
+        zarr_store._RESERVED.clear()
         repository = icechunk.Repository.open(storage)
         session = repository.writable_session("main")
         zarr.open_group(session.store, mode="a").create_group("g")
@@ -280,6 +285,12 @@ class TestIcechunkResults:
         results.on_error = errors.append
         finish_with(results)
         assert isinstance(errors[0], FileExistsError)
+
+    def test_group_names_are_not_restricted_for_an_object_store(self, storage):
+        results = IcechunkResults(_Procedure(), storage, group="a:b")  # fine in icechunk
+        results.store(record(0))
+        finish_with(results)
+        assert committed_groups(storage) == ["a:b_1"]
 
     def test_nested_groups(self, storage):
         results = IcechunkResults(_Procedure(), storage, group="sample/{Sample}/run")
@@ -378,7 +389,7 @@ class TestIcechunkResults:
         assert isinstance(errors[0], OSError)
 
     def test_failing_commit_writes_a_csv_file(self, storage, monkeypatch, tmp_path, caplog):
-        monkeypatch.setattr(icechunk_store.tempfile, "tempdir", str(tmp_path))
+        monkeypatch.setattr(zarr_store.tempfile, "tempdir", str(tmp_path))
         errors = []
         results = IcechunkResults(_Procedure(), storage, on_error=errors.append)
         for i in range(3):
@@ -395,14 +406,14 @@ class TestIcechunkResults:
         results = IcechunkResults(_Procedure(), storage)
         results.store(record(0))
         monkeypatch.setattr(results, "_commit", lambda final: (_ for _ in ()).throw(OSError("no")))
-        monkeypatch.setattr(icechunk_store.tempfile, "mkstemp",
+        monkeypatch.setattr(zarr_store.tempfile, "mkstemp",
                             lambda **_: (_ for _ in ()).throw(OSError("no space")))
         with caplog.at_level(logging.ERROR):
             assert finish_with(results) is None
         assert "fallback file" in caplog.text
 
     def test_the_fallback_includes_records_not_yet_written(self, storage, monkeypatch, tmp_path):
-        monkeypatch.setattr(icechunk_store.tempfile, "tempdir", str(tmp_path))
+        monkeypatch.setattr(zarr_store.tempfile, "tempdir", str(tmp_path))
         monkeypatch.setattr(IcechunkResults, "FLUSH_INTERVAL", 0)
         results = IcechunkResults(_Procedure(), storage)
         results.store(record(0))
@@ -608,7 +619,7 @@ class TestDisplay:
 
     def test_the_name_follows_a_group_that_had_to_change(self, storage):
         results = IcechunkResults(_Procedure(), storage, group="g", message="m")
-        icechunk_store._RESERVED.clear()
+        zarr_store._RESERVED.clear()
         other = IcechunkResults(_Procedure(), storage, group="g")
         other.store(record(0))
         finish_with(other)

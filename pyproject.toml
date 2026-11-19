@@ -45,6 +45,10 @@ tcp = [
     "pyzmq>=16.0.2",
     "cloudpickle>=0.3.1",
 ]
+zarr = [
+    "xarray>=2026.9; python_version >= '3.11'",
+    "zarr>=3.1; python_version >= '3.11'",
+]
 icechunk = [
     "icechunk>=1.1; python_version >= '3.11'",
     "xarray>=2026.9; python_version >= '3.11'",

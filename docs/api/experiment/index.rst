@@ -14,3 +14,4 @@ This section contains specific documentation on the classes and methods of the p
    workers
    results
    icechunk_store
+   zarr_store

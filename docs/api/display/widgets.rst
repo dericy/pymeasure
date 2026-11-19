@@ -73,3 +73,7 @@ Widget classes
 .. automodule:: pymeasure.display.widgets.console_widget
     :members:
     :show-inheritance:
+
+.. automodule:: pymeasure.display.widgets.zarr_widget
+    :members:
+    :show-inheritance:

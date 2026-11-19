@@ -31,12 +31,18 @@ icechunk = pytest.importorskip("icechunk", reason="needs Python >= 3.11 and pyme
 xarray = pytest.importorskip("xarray")
 zarr = pytest.importorskip("zarr")
 
-from pymeasure.experiment import FloatParameter, Metadata, Parameter, Procedure, Results  # noqa: E402
-from pymeasure.experiment import icechunk_store  # noqa: E402
+from pymeasure.experiment import (  # noqa: E402  # noqa: E402
+    FloatParameter,
+    Metadata,
+    Parameter,
+    Procedure,
+    Results,
+    icechunk_store,
+    zarr_store,
+)
 from pymeasure.experiment.icechunk_store import (  # noqa: E402
     INSTALL_HINT,
     IcechunkSaveResult,
-    _jsonable,
     load_group,
     parse_metadata_text,
     results_to_dataset,
@@ -362,9 +368,11 @@ def test_parse_metadata_text_rejects_bad_entries(text):
 
 
 def test_jsonable():
-    assert _jsonable(np.float64(1.5)) == 1.5 and type(_jsonable(np.int64(3))) is int
-    assert _jsonable(np.array([1, 2])) == [1, 2]
-    assert _jsonable((1, "a", None)) == [1, "a", None]
-    assert _jsonable({1: np.float32(2.0)}) == {"1": 2.0}
-    assert _jsonable(float("nan")) == "nan" and _jsonable(float("inf")) == "inf"
-    assert _jsonable(object).startswith("<class")
+    assert zarr_store._jsonable(np.float64(1.5)) == 1.5
+    assert type(zarr_store._jsonable(np.int64(3))) is int
+    assert zarr_store._jsonable(np.array([1, 2])) == [1, 2]
+    assert zarr_store._jsonable((1, "a", None)) == [1, "a", None]
+    assert zarr_store._jsonable({1: np.float32(2.0)}) == {"1": 2.0}
+    assert zarr_store._jsonable(float("nan")) == "nan"
+    assert zarr_store._jsonable(float("inf")) == "inf"
+    assert zarr_store._jsonable(object).startswith("<class")

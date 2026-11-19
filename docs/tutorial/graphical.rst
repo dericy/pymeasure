@@ -268,6 +268,7 @@ Saving to an icechunk store
 
 Next to the file, the data of an experiment can be saved to an `icechunk <https://icechunk.io>`_ store, a transactional storage for Zarr data in which every save is a commit with a message and metadata on a branch.
 This needs the optional dependencies (Python 3.11 or newer): :code:`pip install pymeasure[icechunk]`.
+Note that icechunk does not support its local-file storage on Windows; there, use a zarr store (next section) or an object store.
 The :class:`~pymeasure.display.widgets.icechunk_widget.IcechunkInputWidget` offers text fields in the style of the filename and directory input, and saves every experiment that finishes:
 
 .. code-block:: python
@@ -372,6 +373,53 @@ The column is headed "Filename"; to relabel it and show both ends of the long te
 "Open Data Externally" and "Save Data File Copy" in the context menu of the list are disabled for such experiments, as there is no file; "Reveal in File Explorer" opens the folder that contains the store.
 Other kinds of :class:`~pymeasure.experiment.results.Results` can choose what the list shows by overriding :attr:`~pymeasure.experiment.results.Results.display_name`, :attr:`~pymeasure.experiment.results.Results.display_details` and :attr:`~pymeasure.experiment.results.Results.is_file`.
 Icechunk's local-filesystem storage is not safe for several processes that commit at the same time; use an object store for that (pass its :code:`icechunk.Storage` to :func:`~pymeasure.experiment.icechunk_store.save_results_to_icechunk`, or give the widget a :code:`storage_factory`).
+
+Saving to a zarr store
+~~~~~~~~~~~~~~~~~~~~~~
+
+A `zarr <https://zarr.dev>`_ store is a directory to which every experiment is appended as a new group: one array per data column, along the dimension :code:`record`, and the procedure, its parameters and its metadata as attributes.
+It is made of plain files, so it works on every operating system, a copy of the directory made with any tool (a file synchronisation service, :code:`rsync`, git-lfs) is a valid store, and several experiments can be appended to the same store.
+The local-file storage of icechunk does not work on Windows; a zarr store does, but has no commits, branches or transactions (use icechunk if you need them, on a system where it works).
+This needs the optional dependencies (Python 3.11 or newer): :code:`pip install pymeasure[zarr]`.
+
+The :class:`~pymeasure.display.widgets.zarr_widget.ZarrInputWidget` has the fields of the icechunk widget that make sense for zarr (the store, the group, extra metadata), and is used in the same ways:
+to record the experiment in the store while it runs, with the live plots reading the data from the store and no CSV file (:class:`~pymeasure.experiment.zarr_store.ZarrResults`), or to append the data of a finished experiment (:meth:`~pymeasure.display.widgets.zarr_widget.ZarrInputWidget.experiment_finished`).
+The recording needs a window without the file inputs and a :code:`queue` method that creates the results:
+
+.. code-block:: python
+
+    class MainWindow(ManagedWindow):
+
+        def __init__(self):
+            super().__init__(
+                procedure_class=TestProcedure,
+                inputs=['iterations', 'delay', 'seed'],
+                x_axis='Iteration',
+                y_axis='Random Number',
+                enable_file_input=False,
+            )
+            self.zarr_input = ZarrInputWidget(TestProcedure, parent=self)
+            dock = QtWidgets.QDockWidget('Zarr store')
+            dock.setWidget(self.zarr_input)
+            dock.setFeatures(QtWidgets.QDockWidget.DockWidgetFeature.NoDockWidgetFeatures)
+            self.addDockWidget(QtCore.Qt.DockWidgetArea.LeftDockWidgetArea, dock)
+
+        def queue(self, procedure=None):
+            if procedure is None:
+                procedure = self.make_procedure()
+            results = self.zarr_input.new_results(procedure)
+            if results is None:  # for example no store; the widget shows why
+                return
+            self.manager.queue(self.new_experiment(results))
+
+The default store is the environment variable :code:`PYMEASURE_ZARR_STORE` or the entry of that name in a :code:`.env` file, as described for icechunk above.
+The records are written in batches while the experiment runs, and the group has the attribute :code:`status` :code:`Running` until the experiment ends and then :code:`Finished`, :code:`Aborted` or :code:`Failed`, so the data of aborted and failed experiments is kept.
+A group that stays at :code:`Running` belongs to an experiment that was interrupted, for example by a crash.
+Other programs can read the data of a running experiment from the directory, but should not append to the same group.
+The names of groups are checked to be valid names of directories on Windows (no :code:`: * ? " < > |`, no trailing dot or space, no :code:`CON` or :code:`NUL`), so that a store can always be copied to Windows.
+Read a group with :func:`~pymeasure.experiment.zarr_store.load_zarr_group`, or with :code:`xarray.open_zarr(path, group=..., consolidated=False)`.
+An existing CSV file can be appended with :func:`~pymeasure.experiment.zarr_store.save_results_to_zarr` after loading it with :meth:`~pymeasure.experiment.results.Results.load`.
+In the list of experiments, such an experiment shows :code:`path/to/store#group`.
 
 Customising the plot options
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~

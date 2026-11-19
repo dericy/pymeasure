@@ -318,7 +318,7 @@ class Results:
         del self._module
         del self._file
 
-    def make_recorder(self, queue):
+    def make_recorder(self, queue: Any) -> Any:
         """Return the (not yet started) listener that stores the records emitted by the
         procedure while it runs.
 

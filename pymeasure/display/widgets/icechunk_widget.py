@@ -25,14 +25,15 @@
 import logging
 import re
 import textwrap
+from typing import Any
 
 from ...experiment.icechunk_store import (
     IcechunkResults,
-    IcechunkSaveResult,
     default_store,
     parse_metadata_text,
     save_results_to_icechunk,
 )
+from ...experiment.zarr_store import ZarrResults
 from ..Qt import QtCore, QtGui, QtWidgets
 from .directory_widget import DirectoryLineEdit
 from .filename_widget import FilenameValidator, PlaceholderCompleter
@@ -156,6 +157,19 @@ class IcechunkInputWidget(QtWidgets.QWidget):
     _commit_done = QtCore.Signal(object)
     _commit_failed = QtCore.Signal(str)
 
+    # what differs for another kind of store (see ZarrInputWidget)
+    _TITLE = "Icechunk store"
+    _STORE_PLACEHOLDER = "Directory of the icechunk store"
+    _STORE_TOOLTIP = ("The directory of the icechunk store. It is created and initialised if it "
+                      "does not exist yet.")
+    _SAVE_TOOLTIP = ("Control whether the measurement is saved to the icechunk store with the "
+                     "settings\nbelow (checked) or not (unchecked).")
+    _METADATA_LABEL = "Commit metadata"
+    _METADATA_SUMMARY = (
+        "Extra metadata of the commit as 'key=value' entries separated by ';', for example "
+        "'sample={Sample}; operator=me'. The group, the procedure and the pymeasure version are "
+        "always added.")
+
     def __init__(self, procedure_class, parent=None, storage_factory=None):
         super().__init__(parent)
         self.procedure_class = procedure_class
@@ -166,7 +180,7 @@ class IcechunkInputWidget(QtWidgets.QWidget):
         self._setup_ui()
         self._layout()
 
-        default = default_store()  # environment variable or .env file
+        default = self._default_store()  # environment variable or .env file
         if default:
             self.store = default
 
@@ -175,17 +189,11 @@ class IcechunkInputWidget(QtWidgets.QWidget):
         self.save_toggle.setLayoutDirection(QtCore.Qt.LayoutDirection.RightToLeft)
         self.save_toggle.setChecked(True)
         self.save_toggle.stateChanged.connect(self.set_input_fields_enabled)
-        self.save_toggle.setToolTip(
-            "Control whether the measurement is saved to the icechunk store with the settings\n"
-            "below (checked) or not (unchecked)."
-        )
+        self.save_toggle.setToolTip(self._SAVE_TOOLTIP)
 
         self.store_input = DirectoryLineEdit(parent=self)
-        self.store_input.setPlaceholderText("Directory of the icechunk store")
-        self.store_input.setToolTip(
-            "The directory of the icechunk store. It is created and initialised if it does not "
-            "exist yet."
-        )
+        self.store_input.setPlaceholderText(self._STORE_PLACEHOLDER)
+        self.store_input.setToolTip(self._STORE_TOOLTIP)
 
         self.branch_input = QtWidgets.QLineEdit("main", self)
         self._branch_validator = QtGui.QRegularExpressionValidator(
@@ -204,9 +212,7 @@ class IcechunkInputWidget(QtWidgets.QWidget):
 
         self.metadata_input = PlaceholderLineEdit(
             self.procedure_class, parent=self,
-            summary="Extra metadata of the commit as 'key=value' entries separated by ';', "
-                    "for example 'sample={Sample}; operator=me'. The group, the procedure and "
-                    "the pymeasure version are always added.")
+            summary=self._METADATA_SUMMARY)
         self.metadata_input.setPlaceholderText("key=value; key2=value2")
 
         self.status_label = QtWidgets.QLabel("", self)
@@ -216,7 +222,7 @@ class IcechunkInputWidget(QtWidgets.QWidget):
         vbox = QtWidgets.QVBoxLayout()
         vbox.setContentsMargins(0, 0, 0, 0)
 
-        store_label = QtWidgets.QLabel("Icechunk store", self)
+        store_label = QtWidgets.QLabel(self._TITLE, self)
         store_label.setToolTip(self.store_input.toolTip())
         store_box = QtWidgets.QHBoxLayout()
         store_box.addWidget(store_label)
@@ -224,13 +230,15 @@ class IcechunkInputWidget(QtWidgets.QWidget):
         vbox.addLayout(store_box)
         vbox.addWidget(self.store_input)
 
+        self._rows = {}  # name -> (label, field), so that a subclass can hide a row
         for text, field in (("Branch", self.branch_input), ("Group", self.group_input),
                             ("Commit message", self.message_input),
-                            ("Commit metadata", self.metadata_input)):
+                            (self._METADATA_LABEL, self.metadata_input)):
             label = QtWidgets.QLabel(text, self)
             label.setToolTip(field.toolTip())
             vbox.addWidget(label)
             vbox.addWidget(field)
+            self._rows[text] = (label, field)
         vbox.addWidget(self.status_label)
 
         self.setLayout(vbox)
@@ -308,16 +316,9 @@ class IcechunkInputWidget(QtWidgets.QWidget):
         try:
             store = self._store_text()
             storage = self.storage_factory(store) if self.storage_factory else store
-            result = save_results_to_icechunk(
-                results,
-                storage,
-                group=self.group,
-                message=self.commit_message,
-                branch=self.branch,
-                metadata=parse_metadata_text(self.metadata_text),
-            )
+            result = self._save_results(results, storage)
         except Exception as exc:
-            log.exception("Failed to save the data to the icechunk store")
+            log.exception(f"Failed to save the data to the {self._TITLE.lower()}")
             self._show_failed(str(exc))
             return None
         self._show_saved(result)
@@ -345,32 +346,56 @@ class IcechunkInputWidget(QtWidgets.QWidget):
                 store = self.storage_factory(store) if self.storage_factory else store
             else:
                 store = None
-            results = IcechunkResults(
-                procedure,
-                store,
-                group=self.group,
-                message=self.commit_message,
-                branch=self.branch,
-                metadata=parse_metadata_text(self.metadata_text),
-                on_commit=self._commit_done.emit,
-                on_error=lambda exc: self._commit_failed.emit(str(exc)),
-            )
+            results = self._new_results(procedure, store)
         except Exception as exc:
-            log.exception("Failed to prepare the icechunk store")
+            log.exception(f"Failed to prepare the {self._TITLE.lower()}")
             self._show_failed(str(exc))
             return None
         self.status_label.setStyleSheet("")
-        self.status_label.setText(f"Recording in '{results.group}' on branch '{results.branch}'")
+        self.status_label.setText(self._recording_text(results))
         return results
+
+    def _default_store(self):
+        return default_store()
+
+    def _no_store_message(self) -> str:
+        return ("No icechunk store is selected (and no default store is set in the environment "
+                "variable PYMEASURE_ICECHUNK_STORE or in a .env file).")
+
+    def _save_results(self, results, storage) -> Any:
+        return save_results_to_icechunk(
+            results,
+            storage,
+            group=self.group,
+            message=self.commit_message,
+            branch=self.branch,
+            metadata=parse_metadata_text(self.metadata_text),
+        )
+
+    def _new_results(self, procedure, store) -> ZarrResults:
+        return IcechunkResults(
+            procedure,
+            store,
+            group=self.group,
+            message=self.commit_message,
+            branch=self.branch,
+            metadata=parse_metadata_text(self.metadata_text),
+            on_commit=self._commit_done.emit,
+            on_error=lambda exc: self._commit_failed.emit(str(exc)),
+        )
+
+    def _recording_text(self, results) -> str:
+        return f"Recording in '{results.group}' on branch '{results.branch}'"
+
+    def _saved_text(self, result) -> str:
+        return f"Saved as '{result.group}' on branch '{result.branch}' ({result.snapshot_id[:8]})"
 
     def _store_text(self) -> str:
         """The store field, or the default store (see
         :func:`~pymeasure.experiment.icechunk_store.default_store`) if the field is empty."""
-        store = self.store.strip() or default_store()
+        store = self.store.strip() or self._default_store()
         if not store:
-            raise ValueError(
-                "No icechunk store is selected (and no default store is set in the environment "
-                "variable PYMEASURE_ICECHUNK_STORE or in a .env file).")
+            raise ValueError(self._no_store_message())
         return store
 
     def _show_failed(self, message: str):
@@ -379,10 +404,9 @@ class IcechunkInputWidget(QtWidgets.QWidget):
         self.status_label.setText(f"Not saved: {first_line}")
         self.failed.emit(message)
 
-    def _show_saved(self, result: IcechunkSaveResult):
+    def _show_saved(self, result):
         self.status_label.setStyleSheet("")
-        self.status_label.setText(
-            f"Saved as '{result.group}' on branch '{result.branch}' ({result.snapshot_id[:8]})")
+        self.status_label.setText(self._saved_text(result))
         self.saved.emit(result)
 
     def experiment_finished(self, experiment):

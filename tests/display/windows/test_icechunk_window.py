@@ -31,11 +31,11 @@ pytest.importorskip("icechunk", reason="needs Python >= 3.11 and pymeasure[icech
 pytest.importorskip("xarray")
 pytest.importorskip("zarr")
 
-from pymeasure.display.Qt import QtCore, QtWidgets  # noqa: E402
-from pymeasure.display.widgets import IcechunkInputWidget  # noqa: E402
-from pymeasure.display.windows.managed_window import ManagedWindow  # noqa: E402
-from pymeasure.experiment import IntegerParameter, Procedure  # noqa: E402
-from pymeasure.experiment.icechunk_store import load_group  # noqa: E402
+from pymeasure.display.Qt import QtCore, QtWidgets
+from pymeasure.display.widgets import IcechunkInputWidget
+from pymeasure.display.windows.managed_window import ManagedWindow
+from pymeasure.experiment import IntegerParameter, Procedure
+from pymeasure.experiment.icechunk_store import load_group
 
 
 class _Procedure(Procedure):
